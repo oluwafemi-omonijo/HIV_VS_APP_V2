@@ -1,0 +1,87 @@
+{
+  "scenario_name": "DeepANN_FirstVisit_to_Y1",
+  "feature_cols": [
+    "age_Y1",
+    "cd4_Y1",
+    "who_stage_Y1",
+    "functional_status_Y1",
+    "weight_Y1",
+    "regimen_line_Y1",
+    "regimen_type_Y1",
+    "tb_status_Y1",
+    "adherence_prop_Y1",
+    "pharmacy_refill_adherence_pct_Y1",
+    "missed_appointments_Y1",
+    "days_late_Y1",
+    "gender_Y1",
+    "stateProvince_Y1",
+    "facilityName_Y1",
+    "age_baseline_Y1"
+  ],
+  "cat_cols": [
+    "functional_status_Y1",
+    "regimen_line_Y1",
+    "regimen_type_Y1",
+    "tb_status_Y1",
+    "gender_Y1",
+    "stateProvince_Y1",
+    "facilityName_Y1"
+  ],
+  "num_cols": [
+    "age_Y1",
+    "cd4_Y1",
+    "who_stage_Y1",
+    "weight_Y1",
+    "adherence_prop_Y1",
+    "pharmacy_refill_adherence_pct_Y1",
+    "missed_appointments_Y1",
+    "days_late_Y1",
+    "age_baseline_Y1"
+  ],
+  "target_col": "suppressed_lt1000_Y1",
+  "input_years": [
+    1
+  ],
+  "target_year": 1,
+  "test_auc": 0.5926333907056799,
+  "test_pr_auc": 0.11586766316594656,
+  "test_brier": 0.07224526189761579,
+  "best_thresholds": {
+    "F1": {
+      "threshold": 0.09,
+      "precision": 0.10326086956521739,
+      "recall": 0.5428571428571428,
+      "f1": 0.1735159817351598,
+      "youden_j": 0.14526678141135974,
+      "roc_dist_to_top_left": 0.6027011834468818,
+      "tp": 19.0,
+      "fp": 165.0,
+      "tn": 250.0,
+      "fn": 16.0
+    },
+    "YoudenJ": {
+      "threshold": 0.05,
+      "precision": 0.0932475884244373,
+      "recall": 0.8285714285714286,
+      "f1": 0.1676300578034682,
+      "youden_j": 0.149053356282272,
+      "roc_dist_to_top_left": 0.700808508559658,
+      "tp": 29.0,
+      "fp": 282.0,
+      "tn": 133.0,
+      "fn": 6.0
+    },
+    "ROC_top_left": {
+      "threshold": 0.08,
+      "precision": 0.09722222222222222,
+      "recall": 0.6,
+      "f1": 0.16733067729083664,
+      "youden_j": 0.13012048192771086,
+      "roc_dist_to_top_left": 0.5742679802722042,
+      "tp": 21.0,
+      "fp": 195.0,
+      "tn": 220.0,
+      "fn": 14.0
+    }
+  }
+}
