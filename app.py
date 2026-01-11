@@ -121,7 +121,7 @@ st.markdown(
 st.markdown(
     """
     <div class="title-card">
-      <h2 style="margin:0;">HIV Viral Suppression Risk (DeepANN Model Family)</h2>
+      <h2 style="margin:0;">HIV Viral Suppression Risk (DeepANN Model)</h2>
       <div class="small-note">
         Single patient form + Batch CSV scoring • Auto-selects the right model based on available year columns • Uses BestF1 threshold from metadata
       </div>
@@ -147,16 +147,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# -------------------------
-# Debug panel (helps you confirm Streamlit sees models)
-# -------------------------
-with st.expander("🔎 Debug: Check models folder"):
-    st.write("App folder:", str(BASE_DIR))
-    st.write("Models folder:", str(MODELS_DIR))
-    if MODELS_DIR.exists():
-        st.write("Files:", [p.name for p in MODELS_DIR.iterdir()])
-    else:
-        st.error("models/ folder not found beside app.py")
 
 # -------------------------
 # Load available models
