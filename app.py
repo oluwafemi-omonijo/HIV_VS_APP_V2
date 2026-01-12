@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +26,33 @@ OPTIONS = {
     "gender": ["Male", "Female"],
     "stateProvince": ["Abuja-FCT", "Kaduna", "Kano", "Lagos", "Oyo", "Rivers"],
     "facilityName": [f"Facility_{i}" for i in range(1, 21)],
+}
+
+# -------------------------
+# VARIABLE DEFINITIONS (tooltips)
+# -------------------------
+VAR_HELP = {
+    "age": "Client age in completed years (0–120).",
+    "age_baseline": "Baseline age in completed years recorded at Year 1.",
+    "cd4": "CD4 cell count (cells/mm³).",
+    "viral_load": "Most recent viral load result in copies/mL. Must be > 0 to compute log10(VL).",
+    "log10_vl": "Automatically calculated as log10(viral_load). Not entered manually.",
+    "weight": "Weight in kilograms (kg).",
+    "missed_appointments": "Number of missed appointments within the assessment period.",
+    "days_late": "Total number of days late for visits/pickups within the assessment period.",
+    "pharmacy_refill_adherence_pct": "Calculated as (Days covered ÷ Days in period) × 100, capped to 0–100%.",
+    "adherence_prop": "Automatically calculated as pharmacy_refill_adherence_pct ÷ 100 (range 0–1).",
+    "days_in_period": "Assessment window length used for refill adherence (commonly 30/60/90 days).",
+    "days_covered": "Number of days the client had ART available within the assessment period (from refill records).",
+    "gender": "Sex recorded at enrollment.",
+    "functional_status": "Client functional status at last assessment.",
+    "regimen_line": "ART regimen line (1st-line or 2nd-line).",
+    "regimen_type": "ART regimen category/type.",
+    "tb_status": "TB status category.",
+    "who_stage": "WHO clinical stage (1–4).",
+    "stateProvince": "State/Province where the client receives care.",
+    "facilityName": "Facility where the client receives care.",
+    "suppressed_lt1000": "Whether viral load is suppressed below 1000 copies/mL (0=No, 1=Yes).",
 }
 
 # -------------------------
@@ -146,7 +174,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 
 # -------------------------
 # Load available models
@@ -290,7 +317,7 @@ def add_if_in_schema(row: dict, colname: str, value, schema_cols: set):
 # -------------------------
 # Tabs
 # -------------------------
-tab1, tab2 = st.tabs(["🧍 Single patient form", "📤 Upload CSV (batch)"])
+tab1, tab2 = st.tabs(["🧍 Single patient form", "📤Upload CSV (batch)"])
 
 with tab1:
     st.subheader("Single patient form (executive-friendly)")
@@ -299,7 +326,13 @@ with tab1:
         unsafe_allow_html=True,
     )
 
-    max_year = st.selectbox("Data available up to which year?", options=[1, 2, 3, 4], index=0, key="sp_max_year")
+    max_year = st.selectbox(
+        "Data available up to which year?",
+        options=[1, 2, 3, 4],
+        index=0,
+        key="sp_max_year",
+        help="Choose how many years of inputs you want to provide (Y1..Y4). The app selects the matching model.",
+    )
     chosen_key = choose_model_key_by_year(max_year, available_keys)
 
     if not chosen_key:
@@ -325,66 +358,128 @@ with tab1:
                 n1, n2, n3 = st.columns(3)
                 with n1:
                     age = st.number_input(
-                        f"age_Y{y}", min_value=0, max_value=120, value=35, step=1, key=f"sp_age_{y}"
+                        f"age_Y{y}",
+                        min_value=0, max_value=120, value=35, step=1,
+                        key=f"sp_age_{y}",
+                        help=VAR_HELP["age"]
                     )
                     add_if_in_schema(row, f"age_Y{y}", float(age), schema_cols)
 
                 with n2:
                     cd4 = st.number_input(
-                        f"cd4_Y{y}", min_value=0, max_value=5000, value=350, step=10, key=f"sp_cd4_{y}"
+                        f"cd4_Y{y}",
+                        min_value=0, max_value=5000, value=350, step=10,
+                        key=f"sp_cd4_{y}",
+                        help=VAR_HELP["cd4"]
                     )
                     add_if_in_schema(row, f"cd4_Y{y}", float(cd4), schema_cols)
 
                 with n3:
                     vl = st.number_input(
-                        f"viral_load_Y{y}", min_value=0.0, value=1000.0, step=50.0, key=f"sp_vl_{y}"
+                        f"viral_load_Y{y}",
+                        min_value=0.0, value=1000.0, step=50.0,
+                        key=f"sp_vl_{y}",
+                        help=VAR_HELP["viral_load"]
                     )
                     add_if_in_schema(row, f"viral_load_Y{y}", float(vl), schema_cols)
 
+                # log10_vl is CALCULATED from viral_load (not entered manually)
                 n4, n5, n6 = st.columns(3)
                 with n4:
-                    logvl = st.number_input(
-                        f"log10_vl_Y{y}", min_value=0.0, value=3.0, step=0.1, key=f"sp_logvl_{y}"
+                    if vl > 0:
+                        logvl = round(math.log10(vl), 3)
+                    else:
+                        logvl = 0.0  # safe fallback
+                        st.caption("VL is 0 → log10(VL) set to 0.000 (cannot take log10 of 0).")
+
+                    st.text_input(
+                        f"log10_vl_Y{y} (auto-calculated)",
+                        value=f"{logvl:.3f}",
+                        disabled=True,
+                        key=f"sp_logvl_display_{y}",
+                        help=VAR_HELP["log10_vl"]
                     )
                     add_if_in_schema(row, f"log10_vl_Y{y}", float(logvl), schema_cols)
 
                 with n5:
                     wt = st.number_input(
-                        f"weight_Y{y}", min_value=0.0, value=60.0, step=0.5, key=f"sp_wt_{y}"
+                        f"weight_Y{y}",
+                        min_value=0.0, value=60.0, step=0.5,
+                        key=f"sp_wt_{y}",
+                        help=VAR_HELP["weight"]
                     )
                     add_if_in_schema(row, f"weight_Y{y}", float(wt), schema_cols)
 
                 with n6:
-                    adh = st.number_input(
-                        f"adherence_prop_Y{y}", min_value=0.0, max_value=1.0, value=0.9, step=0.01, key=f"sp_adh_{y}"
-                    )
-                    add_if_in_schema(row, f"adherence_prop_Y{y}", float(adh), schema_cols)
-
-                n7, n8, n9 = st.columns(3)
-                with n7:
-                    refill = st.number_input(
-                        f"pharmacy_refill_adherence_pct_Y{y}",
-                        min_value=0.0, max_value=100.0, value=90.0, step=1.0,
-                        key=f"sp_refill_{y}",
-                    )
-                    add_if_in_schema(row, f"pharmacy_refill_adherence_pct_Y{y}", float(refill), schema_cols)
-
-                with n8:
                     missed = st.number_input(
-                        f"missed_appointments_Y{y}", min_value=0, value=0, step=1, key=f"sp_missed_{y}"
+                        f"missed_appointments_Y{y}",
+                        min_value=0, value=0, step=1,
+                        key=f"sp_missed_{y}",
+                        help=VAR_HELP["missed_appointments"]
                     )
                     add_if_in_schema(row, f"missed_appointments_Y{y}", float(missed), schema_cols)
 
-                with n9:
-                    late = st.number_input(
-                        f"days_late_Y{y}", min_value=0, value=0, step=1, key=f"sp_late_{y}"
+                # Pharmacy refill adherence (%) is CALCULATED from user-entered calculator inputs
+                st.markdown("#### Pharmacy refill adherence calculator")
+
+                cA, cB, cC = st.columns(3)
+                with cA:
+                    days_in_period = st.number_input(
+                        f"Days in assessment period (Y{y})",
+                        min_value=1, max_value=365, value=30, step=1,
+                        key=f"sp_days_in_period_{y}",
+                        help=VAR_HELP["days_in_period"]
                     )
-                    add_if_in_schema(row, f"days_late_Y{y}", float(late), schema_cols)
+
+                with cB:
+                    days_covered = st.number_input(
+                        f"Days covered by refills (Y{y})",
+                        min_value=0, max_value=365, value=0, step=1,
+                        key=f"sp_days_covered_{y}",
+                        help=VAR_HELP["days_covered"]
+                    )
+
+                pharmacy_refill_adherence_pct = (days_covered / days_in_period) * 100.0
+                pharmacy_refill_adherence_pct = max(0.0, min(100.0, pharmacy_refill_adherence_pct))  # cap 0–100
+                pharmacy_refill_adherence_pct = round(pharmacy_refill_adherence_pct, 2)
+
+                adherence_prop = round(pharmacy_refill_adherence_pct / 100.0, 4)
+
+                with cC:
+                    st.text_input(
+                        f"pharmacy_refill_adherence_pct_Y{y} (auto)",
+                        value=f"{pharmacy_refill_adherence_pct:.2f}",
+                        disabled=True,
+                        key=f"sp_refill_display_{y}",
+                        help=VAR_HELP["pharmacy_refill_adherence_pct"]
+                    )
+                    st.text_input(
+                        f"adherence_prop_Y{y} (auto)",
+                        value=f"{adherence_prop:.4f}",
+                        disabled=True,
+                        key=f"sp_adh_display_{y}",
+                        help=VAR_HELP["adherence_prop"]
+                    )
+
+                add_if_in_schema(row, f"pharmacy_refill_adherence_pct_Y{y}", float(pharmacy_refill_adherence_pct), schema_cols)
+                add_if_in_schema(row, f"adherence_prop_Y{y}", float(adherence_prop), schema_cols)
+
+                # days_late comes after adherence in your original layout
+                late = st.number_input(
+                    f"days_late_Y{y}",
+                    min_value=0, value=0, step=1,
+                    key=f"sp_late_{y}",
+                    help=VAR_HELP["days_late"]
+                )
+                add_if_in_schema(row, f"days_late_Y{y}", float(late), schema_cols)
 
                 # age_baseline: usually only Year 1
                 if y == 1:
                     base_age = st.number_input(
-                        "age_baseline_Y1", min_value=0, max_value=120, value=35, step=1, key="sp_base_age"
+                        "age_baseline_Y1",
+                        min_value=0, max_value=120, value=35, step=1,
+                        key="sp_base_age",
+                        help=VAR_HELP["age_baseline"]
                     )
                     add_if_in_schema(row, "age_baseline_Y1", float(base_age), schema_cols)
 
@@ -393,41 +488,86 @@ with tab1:
                 # ---- REQUIRED DROPDOWNS ----
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    gender = st.selectbox(f"gender_Y{y}", OPTIONS["gender"], key=f"sp_gender_{y}")
+                    gender = st.selectbox(
+                        f"gender_Y{y}",
+                        OPTIONS["gender"],
+                        key=f"sp_gender_{y}",
+                        help=VAR_HELP["gender"]
+                    )
                     add_if_in_schema(row, f"gender_Y{y}", gender, schema_cols)
 
                 with c2:
-                    func = st.selectbox(f"functional_status_Y{y}", OPTIONS["functional_status"], key=f"sp_func_{y}")
+                    func = st.selectbox(
+                        f"functional_status_Y{y}",
+                        OPTIONS["functional_status"],
+                        key=f"sp_func_{y}",
+                        help=VAR_HELP["functional_status"]
+                    )
                     add_if_in_schema(row, f"functional_status_Y{y}", func, schema_cols)
 
                 with c3:
-                    regimen_line = st.selectbox(f"regimen_line_Y{y}", OPTIONS["regimen_line"], key=f"sp_line_{y}")
+                    regimen_line = st.selectbox(
+                        f"regimen_line_Y{y}",
+                        OPTIONS["regimen_line"],
+                        key=f"sp_line_{y}",
+                        help=VAR_HELP["regimen_line"]
+                    )
                     add_if_in_schema(row, f"regimen_line_Y{y}", regimen_line, schema_cols)
 
                 c4, c5, c6 = st.columns(3)
                 with c4:
-                    regimen_type = st.selectbox(f"regimen_type_Y{y}", OPTIONS["regimen_type"], key=f"sp_type_{y}")
+                    regimen_type = st.selectbox(
+                        f"regimen_type_Y{y}",
+                        OPTIONS["regimen_type"],
+                        key=f"sp_type_{y}",
+                        help=VAR_HELP["regimen_type"]
+                    )
                     add_if_in_schema(row, f"regimen_type_Y{y}", regimen_type, schema_cols)
 
                 with c5:
-                    tb = st.selectbox(f"tb_status_Y{y}", OPTIONS["tb_status"], key=f"sp_tb_{y}")
+                    tb = st.selectbox(
+                        f"tb_status_Y{y}",
+                        OPTIONS["tb_status"],
+                        key=f"sp_tb_{y}",
+                        help=VAR_HELP["tb_status"]
+                    )
                     add_if_in_schema(row, f"tb_status_Y{y}", tb, schema_cols)
 
                 with c6:
-                    who = st.selectbox(f"who_stage_Y{y}", OPTIONS["who_stage"], key=f"sp_who_{y}")
+                    who = st.selectbox(
+                        f"who_stage_Y{y}",
+                        OPTIONS["who_stage"],
+                        key=f"sp_who_{y}",
+                        help=VAR_HELP["who_stage"]
+                    )
                     add_if_in_schema(row, f"who_stage_Y{y}", who, schema_cols)
 
                 c7, c8, c9 = st.columns(3)
                 with c7:
-                    state = st.selectbox(f"stateProvince_Y{y}", OPTIONS["stateProvince"], key=f"sp_state_{y}")
+                    state = st.selectbox(
+                        f"stateProvince_Y{y}",
+                        OPTIONS["stateProvince"],
+                        key=f"sp_state_{y}",
+                        help=VAR_HELP["stateProvince"]
+                    )
                     add_if_in_schema(row, f"stateProvince_Y{y}", state, schema_cols)
 
                 with c8:
-                    fac = st.selectbox(f"facilityName_Y{y}", OPTIONS["facilityName"], key=f"sp_fac_{y}")
+                    fac = st.selectbox(
+                        f"facilityName_Y{y}",
+                        OPTIONS["facilityName"],
+                        key=f"sp_fac_{y}",
+                        help=VAR_HELP["facilityName"]
+                    )
                     add_if_in_schema(row, f"facilityName_Y{y}", fac, schema_cols)
 
                 with c9:
-                    sup = st.selectbox(f"suppressed_lt1000_Y{y}", OPTIONS["suppressed_lt1000"], key=f"sp_sup_{y}")
+                    sup = st.selectbox(
+                        f"suppressed_lt1000_Y{y}",
+                        OPTIONS["suppressed_lt1000"],
+                        key=f"sp_sup_{y}",
+                        help=VAR_HELP["suppressed_lt1000"]
+                    )
                     st.caption("Note: 0 = No, 1 = Yes")
                     add_if_in_schema(row, f"suppressed_lt1000_Y{y}", int(sup), schema_cols)
 
@@ -507,4 +647,3 @@ with tab2:
                 mime="text/csv",
                 key="batch_download_btn",
             )
-
