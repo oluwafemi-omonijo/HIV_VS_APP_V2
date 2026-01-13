@@ -1,11 +1,13 @@
 import json
 import math
+import datetime as dt
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import tensorflow as tf
+import requests
 
 # -------------------------
 # PATHS (always correct)
@@ -159,7 +161,7 @@ st.markdown(
 )
 
 # -------------------------
-# Disclaimer (Simulated dataset + non-clinical use)
+# Disclaimer
 # -------------------------
 st.markdown(
     """
@@ -269,13 +271,10 @@ def align_to_schema(df_in: pd.DataFrame, feature_cols: list, cat_cols: list, num
 
 def to_model_input(X: pd.DataFrame, cat_cols: list, num_cols: list):
     d = {}
-
-    # Categorical -> tf.string tensor
     for c in cat_cols:
         arr = X[c].fillna("Unknown").astype(str).to_numpy().reshape(-1, 1)
         d[c] = tf.convert_to_tensor(arr, dtype=tf.string)
 
-    # Numeric -> tf.float32 tensor
     for c in num_cols:
         arr = pd.to_numeric(X[c], errors="coerce").fillna(0.0).to_numpy().astype(np.float32).reshape(-1, 1)
         d[c] = tf.convert_to_tensor(arr, dtype=tf.float32)
@@ -306,12 +305,178 @@ def predict_df(df_in: pd.DataFrame, model_info: dict):
     return out
 
 
-# -------------------------
-# Single Patient Form Builder (uses your fixed dropdown values)
-# -------------------------
 def add_if_in_schema(row: dict, colname: str, value, schema_cols: set):
     if colname in schema_cols:
         row[colname] = value
+
+
+# =========================
+# AGENTIC AI LAYER
+# =========================
+def agent_validate_row(row: dict, max_year: int) -> dict:
+    errors, warnings, fixes = [], [], []
+
+    for y in range(1, max_year + 1):
+        vl_key = f"viral_load_Y{y}"
+        log_key = f"log10_vl_Y{y}"
+        pct_key = f"pharmacy_refill_adherence_pct_Y{y}"
+        prop_key = f"adherence_prop_Y{y}"
+
+        if vl_key in row:
+            vl = float(row.get(vl_key, 0.0))
+            if vl < 0:
+                errors.append(f"{vl_key}: cannot be negative.")
+            if vl == 0:
+                warnings.append(f"{vl_key}: VL is 0 → log10_vl will be 0.000 (check if VL is missing).")
+
+        if (vl_key in row) and (log_key in row):
+            vl = float(row.get(vl_key, 0.0))
+            logvl = float(row.get(log_key, 0.0))
+            expected = round(math.log10(vl), 3) if vl > 0 else 0.0
+            if abs(logvl - expected) > 0.02:
+                warnings.append(f"{log_key}: mismatch with log10({vl_key}). Using computed value.")
+                row[log_key] = expected
+                fixes.append(f"Set {log_key}={expected} from {vl_key}.")
+
+        if pct_key in row:
+            pct = float(row.get(pct_key, 0.0))
+            if pct < 0 or pct > 100:
+                warnings.append(f"{pct_key}: out of range; capped to 0–100.")
+                pct = max(0.0, min(100.0, pct))
+                row[pct_key] = round(pct, 2)
+                fixes.append(f"Capped {pct_key} to {row[pct_key]}.")
+
+        if (pct_key in row) and (prop_key in row):
+            pct = float(row.get(pct_key, 0.0))
+            prop = float(row.get(prop_key, 0.0))
+            expected_prop = round(pct / 100.0, 4)
+            if abs(prop - expected_prop) > 0.01:
+                warnings.append(f"{prop_key}: mismatch with {pct_key}/100. Using computed value.")
+                row[prop_key] = expected_prop
+                fixes.append(f"Set {prop_key}={expected_prop} from {pct_key}.")
+
+        if prop_key in row:
+            prop = float(row.get(prop_key, 0.0))
+            if prop < 0 or prop > 1:
+                warnings.append(f"{prop_key}: out of range; capped to 0–1.")
+                prop = max(0.0, min(1.0, prop))
+                row[prop_key] = round(prop, 4)
+                fixes.append(f"Capped {prop_key} to {row[prop_key]}.")
+
+    ok = len(errors) == 0
+    return {"ok": ok, "errors": errors, "warnings": warnings, "fixes": fixes, "row": row}
+
+
+def agent_template_explanation(row: dict, prob_unsupp: float, pred_class: int, thr: float, max_year: int) -> str:
+    y = max_year
+    vl = row.get(f"viral_load_Y{y}", None)
+    logvl = row.get(f"log10_vl_Y{y}", None)
+    pct = row.get(f"pharmacy_refill_adherence_pct_Y{y}", None)
+    prop = row.get(f"adherence_prop_Y{y}", None)
+    missed = row.get(f"missed_appointments_Y{y}", None)
+    late = row.get(f"days_late_Y{y}", None)
+    cd4 = row.get(f"cd4_Y{y}", None)
+
+    risk_label = "Higher risk of non-suppression" if pred_class == 1 else "Lower risk of non-suppression"
+    lines = []
+    lines.append(f"**Summary:** {risk_label}.")
+    lines.append(f"Model output probability (unsuppressed risk) = **{prob_unsupp:.3f}** using threshold **{thr:.3f}**.")
+
+    lines.append("\n**Key factors from latest year inputs (program interpretation):**")
+    if vl is not None:
+        lines.append(f"- Viral load (copies/mL): **{vl}** (log10: **{logvl}**) — higher values generally increase risk.")
+    if pct is not None:
+        lines.append(f"- Pharmacy refill adherence (%): **{pct}%** (prop: **{prop}**) — lower refill adherence generally increases risk.")
+    if missed is not None:
+        lines.append(f"- Missed appointments: **{missed}** — more missed visits can increase risk.")
+    if late is not None:
+        lines.append(f"- Days late: **{late}** — frequent delays can signal gaps in continuity.")
+    if cd4 is not None:
+        lines.append(f"- CD4: **{cd4}** — may correlate with risk depending on context.")
+
+    lines.append("\n**Suggested next program actions (non-clinical):**")
+    if pred_class == 1:
+        lines.append("- Prioritize adherence support / follow-up for this client in routine program workflow.")
+        lines.append("- Verify data completeness (VL value, refill period definition, missed visit counts).")
+        lines.append("- Schedule routine follow-up review based on your program SOP.")
+    else:
+        lines.append("- Continue routine follow-up per program SOP.")
+        lines.append("- Maintain refill continuity and timely visit tracking.")
+
+    lines.append("\n*Note: This is decision-support for program workflows; not a diagnosis or treatment recommendation.*")
+    return "\n".join(lines)
+
+
+def llm_enabled() -> bool:
+    return bool(st.secrets.get("LLM_API_KEY", "")) and bool(st.secrets.get("LLM_BASE_URL", "")) and bool(st.secrets.get("LLM_MODEL", ""))
+
+
+def call_llm_narrative(prompt: str) -> str:
+    api_key = st.secrets.get("LLM_API_KEY")
+    base_url = st.secrets.get("LLM_BASE_URL", "").rstrip("/")
+    model = st.secrets.get("LLM_MODEL", "")
+
+    if not api_key or not base_url or not model:
+        return ""
+
+    url = f"{base_url}/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    system = (
+        "You are an assistant embedded in a health program decision-support app. "
+        "Do NOT provide diagnosis, treatment, dosing, or regimen advice. "
+        "Keep outputs programmatic (data quality, follow-up prioritization, interpretation). "
+        "Assume all data is de-identified. Keep it concise and clear."
+    )
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.2,
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return ""
+
+
+def agent_explain(row: dict, prob_unsupp: float, pred_class: int, thr: float, max_year: int, use_llm: bool) -> str:
+    base = agent_template_explanation(row, prob_unsupp, pred_class, thr, max_year)
+    if not use_llm:
+        return base
+
+    if not llm_enabled():
+        return base + "\n\n*(LLM not configured; showing standard explanation.)*"
+
+    prompt = (
+        "Rewrite the following explanation to be easier for a program manager to read. "
+        "Keep it non-clinical, avoid diagnosis/treatment, and preserve the key numbers.\n\n"
+        f"{base}"
+    )
+    improved = call_llm_narrative(prompt)
+    return improved if improved else base
+
+
+def agent_build_audit_record(row: dict, chosen_key: str, prob: float, pred: int, thr: float, max_year: int) -> dict:
+    y = max_year
+    return {
+        "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
+        "model_key": chosen_key,
+        "max_year": int(max_year),
+        "pred_prob_unsuppressed": float(prob),
+        "pred_class": int(pred),
+        "threshold": float(thr),
+        "viral_load_latest": row.get(f"viral_load_Y{y}", None),
+        "log10_vl_latest": row.get(f"log10_vl_Y{y}", None),
+        "refill_pct_latest": row.get(f"pharmacy_refill_adherence_pct_Y{y}", None),
+        "adherence_prop_latest": row.get(f"adherence_prop_Y{y}", None),
+    }
 
 
 # -------------------------
@@ -349,12 +514,10 @@ with tab1:
 
         row = {}
 
-        # Create Year sections
         for y in range(1, max_year + 1):
             with st.expander(f"Year {y} inputs", expanded=(y == 1)):
                 st.markdown("#### Clinical / adherence metrics")
 
-                # ---- Numeric inputs (Year y) ----
                 n1, n2, n3 = st.columns(3)
                 with n1:
                     age = st.number_input(
@@ -383,20 +546,22 @@ with tab1:
                     )
                     add_if_in_schema(row, f"viral_load_Y{y}", float(vl), schema_cols)
 
-                # log10_vl is CALCULATED from viral_load (not entered manually)
+                # IMPORTANT FIX:
+                # Use st.metric for calculated fields (NOT disabled text_input),
+                # because disabled inputs can "freeze" display on Streamlit Cloud.
+
                 n4, n5, n6 = st.columns(3)
+
                 with n4:
                     if vl > 0:
                         logvl = round(math.log10(vl), 3)
                     else:
-                        logvl = 0.0  # safe fallback
+                        logvl = 0.0
                         st.caption("VL is 0 → log10(VL) set to 0.000 (cannot take log10 of 0).")
 
-                    st.text_input(
-                        f"log10_vl_Y{y} (auto-calculated)",
+                    st.metric(
+                        label=f"log10_vl_Y{y} (auto)",
                         value=f"{logvl:.3f}",
-                        disabled=True,
-                        key=f"sp_logvl_display_{y}",
                         help=VAR_HELP["log10_vl"]
                     )
                     add_if_in_schema(row, f"log10_vl_Y{y}", float(logvl), schema_cols)
@@ -419,7 +584,6 @@ with tab1:
                     )
                     add_if_in_schema(row, f"missed_appointments_Y{y}", float(missed), schema_cols)
 
-                # Pharmacy refill adherence (%) is CALCULATED from user-entered calculator inputs
                 st.markdown("#### Pharmacy refill adherence calculator")
 
                 cA, cB, cC = st.columns(3)
@@ -439,32 +603,31 @@ with tab1:
                         help=VAR_HELP["days_covered"]
                     )
 
-                pharmacy_refill_adherence_pct = (days_covered / days_in_period) * 100.0
-                pharmacy_refill_adherence_pct = max(0.0, min(100.0, pharmacy_refill_adherence_pct))  # cap 0–100
-                pharmacy_refill_adherence_pct = round(pharmacy_refill_adherence_pct, 2)
+                # hard guard
+                if days_in_period <= 0:
+                    pharmacy_refill_adherence_pct = 0.0
+                else:
+                    pharmacy_refill_adherence_pct = (days_covered / days_in_period) * 100.0
 
+                pharmacy_refill_adherence_pct = max(0.0, min(100.0, pharmacy_refill_adherence_pct))
+                pharmacy_refill_adherence_pct = round(pharmacy_refill_adherence_pct, 2)
                 adherence_prop = round(pharmacy_refill_adherence_pct / 100.0, 4)
 
                 with cC:
-                    st.text_input(
-                        f"pharmacy_refill_adherence_pct_Y{y} (auto)",
-                        value=f"{pharmacy_refill_adherence_pct:.2f}",
-                        disabled=True,
-                        key=f"sp_refill_display_{y}",
+                    st.metric(
+                        label=f"pharmacy_refill_adherence_pct_Y{y} (auto)",
+                        value=f"{pharmacy_refill_adherence_pct:.2f}%",
                         help=VAR_HELP["pharmacy_refill_adherence_pct"]
                     )
-                    st.text_input(
-                        f"adherence_prop_Y{y} (auto)",
+                    st.metric(
+                        label=f"adherence_prop_Y{y} (auto)",
                         value=f"{adherence_prop:.4f}",
-                        disabled=True,
-                        key=f"sp_adh_display_{y}",
                         help=VAR_HELP["adherence_prop"]
                     )
 
                 add_if_in_schema(row, f"pharmacy_refill_adherence_pct_Y{y}", float(pharmacy_refill_adherence_pct), schema_cols)
                 add_if_in_schema(row, f"adherence_prop_Y{y}", float(adherence_prop), schema_cols)
 
-                # days_late comes after adherence in your original layout
                 late = st.number_input(
                     f"days_late_Y{y}",
                     min_value=0, value=0, step=1,
@@ -473,7 +636,6 @@ with tab1:
                 )
                 add_if_in_schema(row, f"days_late_Y{y}", float(late), schema_cols)
 
-                # age_baseline: usually only Year 1
                 if y == 1:
                     base_age = st.number_input(
                         "age_baseline_Y1",
@@ -485,7 +647,6 @@ with tab1:
 
                 st.markdown("#### Program / clinical context")
 
-                # ---- REQUIRED DROPDOWNS ----
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     gender = st.selectbox(
@@ -577,18 +738,14 @@ with tab1:
 
     if st.button("Predict (Single Patient)", type="primary", key="sp_predict_btn"):
         df1 = pd.DataFrame([row])
-
-        # Run prediction once
         res = predict_df(df1, available[chosen_key])
 
-        # If missing features were auto-filled, block and request completion
         missing_txt = str(res.loc[0, "missing_features_filled"] or "").strip()
         if missing_txt:
             st.error("Please complete the missing inputs before predicting.")
             st.write("Missing features detected:", missing_txt)
             st.stop()
 
-        # Display results
         prob = float(res.loc[0, "pred_prob_unsuppressed"])
         pred = int(res.loc[0, "pred_class"])
         thr = float(res.loc[0, "used_threshold"])
@@ -614,6 +771,83 @@ with tab1:
             st.write("Row preview:")
             st.dataframe(res)
             st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("## 🤖 Agentic AI (Validation → Explanation → Audit)")
+
+        st.session_state["agent_row"] = row
+        st.session_state["agent_prob"] = prob
+        st.session_state["agent_pred"] = pred
+        st.session_state["agent_thr"] = thr
+        st.session_state["agent_model_key"] = chosen_key
+
+        a1, a2, a3 = st.columns(3)
+
+        with a1:
+            if st.button("1) Run Validation Agent", key="agent_validate_btn"):
+                v = agent_validate_row(st.session_state["agent_row"], st.session_state["sp_max_year"])
+                st.session_state["agent_validation"] = v
+                if v["errors"]:
+                    st.error("Validation errors found.")
+                elif v["warnings"]:
+                    st.warning("Validation completed with warnings.")
+                else:
+                    st.success("Validation passed (no errors).")
+
+        with a2:
+            use_llm = st.toggle(
+                "Use AI narrative (LLM)",
+                value=False,
+                help="Optional. Requires LLM secrets configured. If not configured, the app will show the standard explanation.",
+            )
+            if st.button("2) Generate Explanation Agent", key="agent_explain_btn"):
+                v = st.session_state.get("agent_validation")
+                row_for_explain = v["row"] if v else st.session_state["agent_row"]
+
+                explanation = agent_explain(
+                    row=row_for_explain,
+                    prob_unsupp=st.session_state["agent_prob"],
+                    pred_class=st.session_state["agent_pred"],
+                    thr=st.session_state["agent_thr"],
+                    max_year=st.session_state["sp_max_year"],
+                    use_llm=use_llm,
+                )
+                st.session_state["agent_explanation"] = explanation
+                st.success("Explanation generated.")
+
+        with a3:
+            if st.button("3) Create Audit Record", key="agent_audit_btn"):
+                v = st.session_state.get("agent_validation")
+                row_for_audit = v["row"] if v else st.session_state["agent_row"]
+
+                audit = agent_build_audit_record(
+                    row=row_for_audit,
+                    chosen_key=st.session_state["agent_model_key"],
+                    prob=st.session_state["agent_prob"],
+                    pred=st.session_state["agent_pred"],
+                    thr=st.session_state["agent_thr"],
+                    max_year=st.session_state["sp_max_year"],
+                )
+                st.session_state.setdefault("audit_log", [])
+                st.session_state["audit_log"].append(audit)
+                st.success("Audit record added (session).")
+
+        v = st.session_state.get("agent_validation")
+        if v:
+            if v["errors"]:
+                st.error("**Errors:**\n" + "\n".join([f"- {e}" for e in v["errors"]]))
+            if v["warnings"]:
+                st.warning("**Warnings:**\n" + "\n".join([f"- {w}" for w in v["warnings"]]))
+            if v["fixes"]:
+                st.info("**Auto-fixes applied:**\n" + "\n".join([f"- {f}" for f in v["fixes"]]))
+
+        explanation = st.session_state.get("agent_explanation")
+        if explanation:
+            st.markdown("### Explanation")
+            st.markdown(explanation)
+
+        if st.session_state.get("audit_log"):
+            st.markdown("### Audit log (this session)")
+            st.dataframe(pd.DataFrame(st.session_state["audit_log"]))
 
 with tab2:
     st.subheader("Batch scoring (Upload CSV)")
@@ -647,3 +881,4 @@ with tab2:
                 mime="text/csv",
                 key="batch_download_btn",
             )
+
