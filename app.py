@@ -20,7 +20,7 @@ MODELS_DIR = BASE_DIR / "models"
 # -------------------------
 OPTIONS = {
     "who_stage": [1, 2, 3, 4],
-    "suppressed_lt1000": [0, 1],  # Note shown in UI: 0=No, 1=Yes
+    "suppressed_lt1000": [0, 1],  # 0=No, 1=Yes
     "functional_status": ["Ambulatory", "Bedridden", "Working"],
     "regimen_line": ["1st-line", "2nd-line"],
     "regimen_type": ["AZT/3TC/NVP", "TDF/3TC/DTG", "TDF/3TC/EFV", "AZT/3TC/LPV/r"],
@@ -37,15 +37,15 @@ VAR_HELP = {
     "age": "Client age in completed years (0–120).",
     "age_baseline": "Baseline age in completed years recorded at Year 1.",
     "cd4": "CD4 cell count (cells/mm³).",
-    "viral_load": "Most recent viral load result in copies/mL. Must be > 0 to compute log10(VL).",
-    "log10_vl": "Automatically calculated as log10(viral_load). Not entered manually.",
+    "viral_load": "Viral load in copies/mL. Must be > 0 to compute log10(VL).",
+    "log10_vl": "Auto-calculated as log10(viral_load). Not entered manually.",
     "weight": "Weight in kilograms (kg).",
     "missed_appointments": "Number of missed appointments within the assessment period.",
     "days_late": "Total number of days late for visits/pickups within the assessment period.",
-    "pharmacy_refill_adherence_pct": "Calculated as (Days covered ÷ Days in period) × 100, capped to 0–100%.",
-    "adherence_prop": "Automatically calculated as pharmacy_refill_adherence_pct ÷ 100 (range 0–1).",
-    "days_in_period": "Assessment window length used for refill adherence (commonly 30/60/90 days).",
+    "days_in_period": "Assessment window length used for refill adherence (e.g., 30/60/90 days).",
     "days_covered": "Number of days the client had ART available within the assessment period (from refill records).",
+    "pharmacy_refill_adherence_pct": "Auto-calculated as (Days covered ÷ Days in period) × 100, capped to 0–100%.",
+    "adherence_prop": "Auto-calculated as pharmacy_refill_adherence_pct ÷ 100 (range 0–1).",
     "gender": "Sex recorded at enrollment.",
     "functional_status": "Client functional status at last assessment.",
     "regimen_line": "ART regimen line (1st-line or 2nd-line).",
@@ -58,18 +58,16 @@ VAR_HELP = {
 }
 
 # -------------------------
-# UI (Black theme + tab hover + varying tab depth)
+# UI
 # -------------------------
 st.set_page_config(page_title="HIV Viral Suppression Risk", layout="wide")
 
 st.markdown(
     """
     <style>
-      /* ===== App background ===== */
       .stApp { background: #0b0f14; color: #e5e7eb; }
       .block-container { padding-top: 1.2rem; }
 
-      /* ===== Title card ===== */
       .title-card {
         background: #0f172a;
         padding: 18px 22px;
@@ -80,7 +78,6 @@ st.markdown(
       }
       .small-note { color: #cbd5e1; font-size: 0.92rem; }
 
-      /* ===== Cards ===== */
       .metric-card {
         background: #0f172a;
         padding: 14px 16px;
@@ -89,7 +86,6 @@ st.markdown(
         box-shadow: 0 6px 18px rgba(0,0,0,0.25);
       }
 
-      /* ===== Tabs styling (Streamlit/BaseWeb) ===== */
       div[data-baseweb="tab-list"]{
         gap: 10px;
         background: transparent;
@@ -106,25 +102,21 @@ st.markdown(
         transition: transform .12s ease, background-color .18s ease, border-color .18s ease, filter .18s ease;
       }
 
-      /* Varying depth per tab */
-      button[role="tab"]:nth-child(1){ background: #111827 !important; } /* deeper */
-      button[role="tab"]:nth-child(2){ background: #0b1220 !important; } /* slightly lighter */
+      button[role="tab"]:nth-child(1){ background: #111827 !important; }
+      button[role="tab"]:nth-child(2){ background: #0b1220 !important; }
 
-      /* Hover effect */
       button[role="tab"]:hover{
         transform: translateY(-1px);
         border-color: rgba(255,255,255,0.25) !important;
         filter: brightness(1.15);
       }
 
-      /* Active tab */
       button[role="tab"][aria-selected="true"]{
         background: #1f2937 !important;
         border-color: rgba(59,130,246,0.85) !important;
         box-shadow: 0 0 0 2px rgba(59,130,246,0.25);
       }
 
-      /* Inputs / selectors dark look */
       .stTextInput input, .stNumberInput input {
         background: #0b1220 !important;
         color: #e5e7eb !important;
@@ -132,7 +124,6 @@ st.markdown(
         border: 1px solid rgba(255,255,255,0.10) !important;
       }
 
-      /* Selectbox baseweb */
       div[data-baseweb="select"] > div {
         background: #0b1220 !important;
         color: #e5e7eb !important;
@@ -140,7 +131,6 @@ st.markdown(
         border: 1px solid rgba(255,255,255,0.10) !important;
       }
 
-      /* Expander */
       details summary { color: #e5e7eb !important; }
       .stCaption { color: #9ca3af !important; }
     </style>
@@ -160,9 +150,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# -------------------------
-# Disclaimer
-# -------------------------
 st.markdown(
     """
     <div class="metric-card" style="margin-bottom:14px;">
@@ -205,6 +192,7 @@ if not available:
         "No models found in models/. Put your .keras and *_metadata.json files inside the models/ folder (same level as app.py)."
     )
     st.stop()
+
 
 # -------------------------
 # Helpers
@@ -386,7 +374,7 @@ def agent_template_explanation(row: dict, prob_unsupp: float, pred_class: int, t
     if vl is not None:
         lines.append(f"- Viral load (copies/mL): **{vl}** (log10: **{logvl}**) — higher values generally increase risk.")
     if pct is not None:
-        lines.append(f"- Pharmacy refill adherence (%): **{pct}%** (prop: **{prop}**) — lower refill adherence generally increases risk.")
+        lines.append(f"- Pharmacy refill adherence (%): **{pct}%** (prop: **{prop}**) — lower adherence generally increases risk.")
     if missed is not None:
         lines.append(f"- Missed appointments: **{missed}** — more missed visits can increase risk.")
     if late is not None:
@@ -419,29 +407,34 @@ def call_llm_narrative(prompt: str) -> str:
     if not api_key or not base_url or not model:
         return ""
 
-    url = f"{base_url}/v1/chat/completions"
+    if base_url.endswith("/v1"):
+        url = f"{base_url}/chat/completions"
+    else:
+        url = f"{base_url}/v1/chat/completions"
+
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-    system = (
-        "You are an assistant embedded in a health program decision-support app. "
-        "Do NOT provide diagnosis, treatment, dosing, or regimen advice. "
-        "Keep outputs programmatic (data quality, follow-up prioritization, interpretation). "
-        "Assume all data is de-identified. Keep it concise and clear."
-    )
-
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": system},
+            {
+                "role": "system",
+                "content": (
+                    "You are an assistant embedded in a health program decision-support app. "
+                    "Do NOT provide diagnosis, treatment, dosing, or regimen advice. "
+                    "Keep outputs programmatic (data quality, follow-up prioritization, interpretation). "
+                    "Assume all data is de-identified. Keep it concise and clear."
+                ),
+            },
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.2,
     }
 
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
+        data = r.json()
+        return data["choices"][0]["message"]["content"].strip()
     except Exception:
         return ""
 
@@ -484,11 +477,6 @@ def agent_build_audit_record(row: dict, chosen_key: str, prob: float, pred: int,
 # -------------------------
 tab1, tab2 = st.tabs(["🧍 Single patient form", "📤Upload CSV (batch)"])
 
-with st.expander("🔧 DEBUG (temporary)", expanded=True):
-    st.write("Has last_res:", "last_res" in st.session_state)
-    st.write("last keys:", [k for k in st.session_state.keys() if k.startswith("last_")])
-    st.write("agent keys:", [k for k in st.session_state.keys() if k.startswith("agent_")])
-
 with tab1:
     st.subheader("Single patient form (executive-friendly)")
     st.markdown(
@@ -503,17 +491,20 @@ with tab1:
         key="sp_max_year",
         help="Choose how many years of inputs you want to provide (Y1..Y4). The app selects the matching model.",
     )
-    chosen_key = choose_model_key_by_year(max_year, available_keys)
 
+    chosen_key = choose_model_key_by_year(max_year, available_keys)
     if not chosen_key:
         st.error("No matching model found for the selected years. Confirm your models exist in the models/ folder.")
         st.stop()
 
     meta = available[chosen_key]["meta"]
-    schema_cols = set(meta["feature_cols"])  # what model expects
+    schema_cols = set(meta["feature_cols"])
 
     st.success(f"Auto-selected model: {chosen_key}")
 
+    # -------------------------
+    # Build input row
+    # -------------------------
     with st.container():
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
 
@@ -527,65 +518,68 @@ with tab1:
                 with n1:
                     age = st.number_input(
                         f"age_Y{y}",
-                        min_value=0, max_value=120, value=35, step=1,
+                        min_value=0,
+                        max_value=120,
+                        value=35,
+                        step=1,
                         key=f"sp_age_{y}",
-                        help=VAR_HELP["age"]
+                        help=VAR_HELP["age"],
                     )
                     add_if_in_schema(row, f"age_Y{y}", float(age), schema_cols)
 
                 with n2:
                     cd4 = st.number_input(
                         f"cd4_Y{y}",
-                        min_value=0, max_value=5000, value=350, step=10,
+                        min_value=0,
+                        max_value=5000,
+                        value=350,
+                        step=10,
                         key=f"sp_cd4_{y}",
-                        help=VAR_HELP["cd4"]
+                        help=VAR_HELP["cd4"],
                     )
                     add_if_in_schema(row, f"cd4_Y{y}", float(cd4), schema_cols)
 
                 with n3:
                     vl = st.number_input(
                         f"viral_load_Y{y}",
-                        min_value=0.0, value=1000.0, step=50.0,
+                        min_value=0.0,
+                        value=1000.0,
+                        step=50.0,
                         key=f"sp_vl_{y}",
-                        help=VAR_HELP["viral_load"]
+                        help=VAR_HELP["viral_load"],
                     )
                     add_if_in_schema(row, f"viral_load_Y{y}", float(vl), schema_cols)
 
-                # IMPORTANT FIX:
-                # Use st.metric for calculated fields (NOT disabled text_input),
-                # because disabled inputs can "freeze" display on Streamlit Cloud.
-
+                # log10_vl auto
                 n4, n5, n6 = st.columns(3)
-
                 with n4:
-                    if vl > 0:
-                        logvl = round(math.log10(vl), 3)
-                    else:
-                        logvl = 0.0
-                        st.caption("VL is 0 → log10(VL) set to 0.000 (cannot take log10 of 0).")
-
+                    logvl = round(math.log10(vl), 3) if vl > 0 else 0.0
                     st.metric(
                         label=f"log10_vl_Y{y} (auto)",
                         value=f"{logvl:.3f}",
-                        help=VAR_HELP["log10_vl"]
+                        help=VAR_HELP["log10_vl"],
                     )
                     add_if_in_schema(row, f"log10_vl_Y{y}", float(logvl), schema_cols)
 
                 with n5:
                     wt = st.number_input(
                         f"weight_Y{y}",
-                        min_value=0.0, value=60.0, step=0.5,
+                        min_value=0.0,
+                        value=60.0,
+                        step=0.5,
                         key=f"sp_wt_{y}",
-                        help=VAR_HELP["weight"]
+                        help=VAR_HELP["weight"],
                     )
                     add_if_in_schema(row, f"weight_Y{y}", float(wt), schema_cols)
 
                 with n6:
                     missed = st.number_input(
                         f"missed_appointments_Y{y}",
-                        min_value=0, value=0, step=1,
+                        min_value=0,
+                        value=0,
+                        step=1,
                         key=f"sp_missed_{y}",
-                        help=VAR_HELP["missed_appointments"]
+                        help=VAR_HELP["missed_appointments"],
                     )
                     add_if_in_schema(row, f"missed_appointments_Y{y}", float(missed), schema_cols)
 
@@ -595,25 +589,25 @@ with tab1:
                 with cA:
                     days_in_period = st.number_input(
                         f"Days in assessment period (Y{y})",
-                        min_value=1, max_value=365, value=30, step=1,
+                        min_value=1,
+                        max_value=365,
+                        value=30,
+                        step=1,
                         key=f"sp_days_in_period_{y}",
-                        help=VAR_HELP["days_in_period"]
+                        help=VAR_HELP["days_in_period"],
                     )
-
                 with cB:
                     days_covered = st.number_input(
                         f"Days covered by refills (Y{y})",
-                        min_value=0, max_value=365, value=0, step=1,
+                        min_value=0,
+                        max_value=365,
+                        value=0,
+                        step=1,
                         key=f"sp_days_covered_{y}",
-                        help=VAR_HELP["days_covered"]
+                        help=VAR_HELP["days_covered"],
                     )
 
-                # hard guard
-                if days_in_period <= 0:
-                    pharmacy_refill_adherence_pct = 0.0
-                else:
-                    pharmacy_refill_adherence_pct = (days_covered / days_in_period) * 100.0
-
+                pharmacy_refill_adherence_pct = (days_covered / days_in_period) * 100.0 if days_in_period > 0 else 0.0
                 pharmacy_refill_adherence_pct = max(0.0, min(100.0, pharmacy_refill_adherence_pct))
                 pharmacy_refill_adherence_pct = round(pharmacy_refill_adherence_pct, 2)
                 adherence_prop = round(pharmacy_refill_adherence_pct / 100.0, 4)
@@ -622,12 +616,12 @@ with tab1:
                     st.metric(
                         label=f"pharmacy_refill_adherence_pct_Y{y} (auto)",
                         value=f"{pharmacy_refill_adherence_pct:.2f}%",
-                        help=VAR_HELP["pharmacy_refill_adherence_pct"]
+                        help=VAR_HELP["pharmacy_refill_adherence_pct"],
                     )
                     st.metric(
                         label=f"adherence_prop_Y{y} (auto)",
                         value=f"{adherence_prop:.4f}",
-                        help=VAR_HELP["adherence_prop"]
+                        help=VAR_HELP["adherence_prop"],
                     )
 
                 add_if_in_schema(row, f"pharmacy_refill_adherence_pct_Y{y}", float(pharmacy_refill_adherence_pct), schema_cols)
@@ -635,18 +629,23 @@ with tab1:
 
                 late = st.number_input(
                     f"days_late_Y{y}",
-                    min_value=0, value=0, step=1,
+                    min_value=0,
+                    value=0,
+                    step=1,
                     key=f"sp_late_{y}",
-                    help=VAR_HELP["days_late"]
+                    help=VAR_HELP["days_late"],
                 )
                 add_if_in_schema(row, f"days_late_Y{y}", float(late), schema_cols)
 
                 if y == 1:
                     base_age = st.number_input(
                         "age_baseline_Y1",
-                        min_value=0, max_value=120, value=35, step=1,
+                        min_value=0,
+                        max_value=120,
+                        value=35,
+                        step=1,
                         key="sp_base_age",
-                        help=VAR_HELP["age_baseline"]
+                        help=VAR_HELP["age_baseline"],
                     )
                     add_if_in_schema(row, "age_baseline_Y1", float(base_age), schema_cols)
 
@@ -658,7 +657,7 @@ with tab1:
                         f"gender_Y{y}",
                         OPTIONS["gender"],
                         key=f"sp_gender_{y}",
-                        help=VAR_HELP["gender"]
+                        help=VAR_HELP["gender"],
                     )
                     add_if_in_schema(row, f"gender_Y{y}", gender, schema_cols)
 
@@ -667,7 +666,7 @@ with tab1:
                         f"functional_status_Y{y}",
                         OPTIONS["functional_status"],
                         key=f"sp_func_{y}",
-                        help=VAR_HELP["functional_status"]
+                        help=VAR_HELP["functional_status"],
                     )
                     add_if_in_schema(row, f"functional_status_Y{y}", func, schema_cols)
 
@@ -676,7 +675,7 @@ with tab1:
                         f"regimen_line_Y{y}",
                         OPTIONS["regimen_line"],
                         key=f"sp_line_{y}",
-                        help=VAR_HELP["regimen_line"]
+                        help=VAR_HELP["regimen_line"],
                     )
                     add_if_in_schema(row, f"regimen_line_Y{y}", regimen_line, schema_cols)
 
@@ -686,7 +685,7 @@ with tab1:
                         f"regimen_type_Y{y}",
                         OPTIONS["regimen_type"],
                         key=f"sp_type_{y}",
-                        help=VAR_HELP["regimen_type"]
+                        help=VAR_HELP["regimen_type"],
                     )
                     add_if_in_schema(row, f"regimen_type_Y{y}", regimen_type, schema_cols)
 
@@ -695,7 +694,7 @@ with tab1:
                         f"tb_status_Y{y}",
                         OPTIONS["tb_status"],
                         key=f"sp_tb_{y}",
-                        help=VAR_HELP["tb_status"]
+                        help=VAR_HELP["tb_status"],
                     )
                     add_if_in_schema(row, f"tb_status_Y{y}", tb, schema_cols)
 
@@ -704,7 +703,7 @@ with tab1:
                         f"who_stage_Y{y}",
                         OPTIONS["who_stage"],
                         key=f"sp_who_{y}",
-                        help=VAR_HELP["who_stage"]
+                        help=VAR_HELP["who_stage"],
                     )
                     add_if_in_schema(row, f"who_stage_Y{y}", who, schema_cols)
 
@@ -714,7 +713,7 @@ with tab1:
                         f"stateProvince_Y{y}",
                         OPTIONS["stateProvince"],
                         key=f"sp_state_{y}",
-                        help=VAR_HELP["stateProvince"]
+                        help=VAR_HELP["stateProvince"],
                     )
                     add_if_in_schema(row, f"stateProvince_Y{y}", state, schema_cols)
 
@@ -723,7 +722,7 @@ with tab1:
                         f"facilityName_Y{y}",
                         OPTIONS["facilityName"],
                         key=f"sp_fac_{y}",
-                        help=VAR_HELP["facilityName"]
+                        help=VAR_HELP["facilityName"],
                     )
                     add_if_in_schema(row, f"facilityName_Y{y}", fac, schema_cols)
 
@@ -732,31 +731,48 @@ with tab1:
                         f"suppressed_lt1000_Y{y}",
                         OPTIONS["suppressed_lt1000"],
                         key=f"sp_sup_{y}",
-                        help=VAR_HELP["suppressed_lt1000"]
+                        help=VAR_HELP["suppressed_lt1000"],
                     )
                     st.caption("Note: 0 = No, 1 = Yes")
                     add_if_in_schema(row, f"suppressed_lt1000_Y{y}", int(sup), schema_cols)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("")
-
+    # -------------------------
+    # Predict button (FIXED): ALWAYS save to session_state and NEVER st.stop() on missing features
+    # -------------------------
     if st.button("Predict (Single Patient)", type="primary", key="sp_predict_btn"):
         df1 = pd.DataFrame([row])
         res = predict_df(df1, available[chosen_key])
 
+        # ALWAYS save FIRST so results persist after reruns (this fixes the agent reset issue)
+        st.session_state["last_row"] = row
+        st.session_state["last_res"] = res
+        st.session_state["last_prob"] = float(res.loc[0, "pred_prob_unsuppressed"])
+        st.session_state["last_pred"] = int(res.loc[0, "pred_class"])
+        st.session_state["last_thr"] = float(res.loc[0, "used_threshold"])
+        st.session_state["last_model_key"] = chosen_key
+        st.session_state["last_max_year"] = max_year
+
+        # Clear previous agent outputs on fresh prediction
+        st.session_state.pop("agent_validation", None)
+        st.session_state.pop("agent_explanation", None)
+
+        # Do NOT block; just warn
         missing_txt = str(res.loc[0, "missing_features_filled"] or "").strip()
         if missing_txt:
-            st.error("Please complete the missing inputs before predicting.")
-            st.write("Missing features detected:", missing_txt)
-            st.stop()
+            st.warning("Some model features were not provided in the form and were auto-filled with defaults.")
+            st.write("Auto-filled features:", missing_txt)
 
-        prob = float(res.loc[0, "pred_prob_unsuppressed"])
-        pred = int(res.loc[0, "pred_class"])
-        thr = float(res.loc[0, "used_threshold"])
+    # -------------------------
+    # Results + Agent UI (ONLY show if we have a saved prediction)
+    # -------------------------
+    if "last_res" in st.session_state:
+        prob = st.session_state["last_prob"]
+        pred = st.session_state["last_pred"]
+        thr = st.session_state["last_thr"]
 
         left, right = st.columns([1, 1])
-
         with left:
             st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
             st.markdown("### Result")
@@ -772,24 +788,23 @@ with tab1:
         with right:
             st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
             st.markdown("### Technical details")
-            st.write("Missing features auto-filled: None")
-            st.write("Row preview:")
-            st.dataframe(res)
+            st.dataframe(st.session_state["last_res"])
             st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("## 🤖 Agentic AI (Validation → Explanation → Audit)")
 
-        st.session_state["agent_row"] = row
-        st.session_state["agent_prob"] = prob
-        st.session_state["agent_pred"] = pred
-        st.session_state["agent_thr"] = thr
-        st.session_state["agent_model_key"] = chosen_key
+        use_llm = st.toggle(
+            "Use AI narrative (LLM)",
+            value=st.session_state.get("use_llm", False),
+            key="use_llm",
+            help="Optional. Requires LLM secrets configured. If not configured, the app shows the standard explanation.",
+        )
 
         a1, a2, a3 = st.columns(3)
 
         with a1:
             if st.button("1) Run Validation Agent", key="agent_validate_btn"):
-                v = agent_validate_row(st.session_state["agent_row"], st.session_state["sp_max_year"])
+                v = agent_validate_row(st.session_state["last_row"], st.session_state["last_max_year"])
                 st.session_state["agent_validation"] = v
                 if v["errors"]:
                     st.error("Validation errors found.")
@@ -799,21 +814,16 @@ with tab1:
                     st.success("Validation passed (no errors).")
 
         with a2:
-            use_llm = st.toggle(
-                "Use AI narrative (LLM)",
-                value=False,
-                help="Optional. Requires LLM secrets configured. If not configured, the app will show the standard explanation.",
-            )
             if st.button("2) Generate Explanation Agent", key="agent_explain_btn"):
                 v = st.session_state.get("agent_validation")
-                row_for_explain = v["row"] if v else st.session_state["agent_row"]
+                row_for_explain = v["row"] if v else st.session_state["last_row"]
 
                 explanation = agent_explain(
                     row=row_for_explain,
-                    prob_unsupp=st.session_state["agent_prob"],
-                    pred_class=st.session_state["agent_pred"],
-                    thr=st.session_state["agent_thr"],
-                    max_year=st.session_state["sp_max_year"],
+                    prob_unsupp=st.session_state["last_prob"],
+                    pred_class=st.session_state["last_pred"],
+                    thr=st.session_state["last_thr"],
+                    max_year=st.session_state["last_max_year"],
                     use_llm=use_llm,
                 )
                 st.session_state["agent_explanation"] = explanation
@@ -822,15 +832,15 @@ with tab1:
         with a3:
             if st.button("3) Create Audit Record", key="agent_audit_btn"):
                 v = st.session_state.get("agent_validation")
-                row_for_audit = v["row"] if v else st.session_state["agent_row"]
+                row_for_audit = v["row"] if v else st.session_state["last_row"]
 
                 audit = agent_build_audit_record(
                     row=row_for_audit,
-                    chosen_key=st.session_state["agent_model_key"],
-                    prob=st.session_state["agent_prob"],
-                    pred=st.session_state["agent_pred"],
-                    thr=st.session_state["agent_thr"],
-                    max_year=st.session_state["sp_max_year"],
+                    chosen_key=st.session_state["last_model_key"],
+                    prob=st.session_state["last_prob"],
+                    pred=st.session_state["last_pred"],
+                    thr=st.session_state["last_thr"],
+                    max_year=st.session_state["last_max_year"],
                 )
                 st.session_state.setdefault("audit_log", [])
                 st.session_state["audit_log"].append(audit)
@@ -853,6 +863,8 @@ with tab1:
         if st.session_state.get("audit_log"):
             st.markdown("### Audit log (this session)")
             st.dataframe(pd.DataFrame(st.session_state["audit_log"]))
+    else:
+        st.info("Run a prediction first to unlock results and the agentic AI tools.")
 
 with tab2:
     st.subheader("Batch scoring (Upload CSV)")
@@ -886,5 +898,6 @@ with tab2:
                 mime="text/csv",
                 key="batch_download_btn",
             )
+
 
 
