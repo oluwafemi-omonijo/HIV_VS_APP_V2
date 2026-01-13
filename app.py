@@ -484,6 +484,11 @@ def agent_build_audit_record(row: dict, chosen_key: str, prob: float, pred: int,
 # -------------------------
 tab1, tab2 = st.tabs(["🧍 Single patient form", "📤Upload CSV (batch)"])
 
+with st.expander("🔧 DEBUG (temporary)", expanded=True):
+    st.write("Has last_res:", "last_res" in st.session_state)
+    st.write("last keys:", [k for k in st.session_state.keys() if k.startswith("last_")])
+    st.write("agent keys:", [k for k in st.session_state.keys() if k.startswith("agent_")])
+
 with tab1:
     st.subheader("Single patient form (executive-friendly)")
     st.markdown(
