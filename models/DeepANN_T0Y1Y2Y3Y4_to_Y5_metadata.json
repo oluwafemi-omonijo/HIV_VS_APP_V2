@@ -1,6 +1,24 @@
 {
-  "scenario_name": "DeepANN_Y1Y2Y3Y4_to_Y5",
   "feature_cols": [
+    "age_T0",
+    "cd4_T0",
+    "viral_load_T0",
+    "log10_vl_T0",
+    "suppressed_lt1000_T0",
+    "who_stage_T0",
+    "functional_status_T0",
+    "weight_T0",
+    "regimen_line_T0",
+    "regimen_type_T0",
+    "tb_status_T0",
+    "adherence_prop_T0",
+    "pharmacy_refill_adherence_pct_T0",
+    "missed_appointments_T0",
+    "days_late_T0",
+    "gender_T0",
+    "stateProvince_T0",
+    "facilityName_T0",
+    "age_baseline_T0",
     "age_Y1",
     "cd4_Y1",
     "viral_load_Y1",
@@ -79,6 +97,13 @@
     "age_baseline_Y4"
   ],
   "cat_cols": [
+    "functional_status_T0",
+    "regimen_line_T0",
+    "regimen_type_T0",
+    "tb_status_T0",
+    "gender_T0",
+    "stateProvince_T0",
+    "facilityName_T0",
     "functional_status_Y1",
     "regimen_line_Y1",
     "regimen_type_Y1",
@@ -109,6 +134,18 @@
     "facilityName_Y4"
   ],
   "num_cols": [
+    "age_T0",
+    "cd4_T0",
+    "viral_load_T0",
+    "log10_vl_T0",
+    "suppressed_lt1000_T0",
+    "who_stage_T0",
+    "weight_T0",
+    "adherence_prop_T0",
+    "pharmacy_refill_adherence_pct_T0",
+    "missed_appointments_T0",
+    "days_late_T0",
+    "age_baseline_T0",
     "age_Y1",
     "cd4_Y1",
     "viral_load_Y1",
@@ -159,52 +196,44 @@
     "age_baseline_Y4"
   ],
   "target_col": "suppressed_lt1000_Y5",
-  "input_years": [
-    1,
-    2,
-    3,
-    4
+  "input_timepoints": [
+    "T0",
+    "Y1",
+    "Y2",
+    "Y3",
+    "Y4"
   ],
-  "target_year": 5,
-  "test_auc": 0.9593510707332901,
-  "test_pr_auc": 0.9856108971442126,
-  "test_brier": 0.07141094199193465,
+  "note": "Auto-repaired after JSON truncation/corruption. Placeholder metrics_test will be overwritten.",
+  "metrics_test": {
+    "AUC": 0.9746632958154309,
+    "AP": 0.9903904977980745,
+    "Accuracy": 0.9545333333333333,
+    "Precision": 0.9602676021865056,
+    "Recall": 0.9837024655244463,
+    "F1": 0.971843778383288,
+    "TP": 23540,
+    "FP": 974,
+    "TN": 5096,
+    "FN": 390
+  },
   "best_thresholds": {
     "F1": {
-      "threshold": 0.48,
-      "precision": 0.927536231884058,
-      "recall": 0.9552238805970149,
-      "f1": 0.9411764705882353,
-      "youden_j": 0.7378325762491889,
-      "roc_dist_to_top_left": 0.2219546802273823,
-      "tp": 320.0,
-      "fp": 25.0,
-      "tn": 90.0,
-      "fn": 15.0
+      "threshold": 0.6900000000000001,
+      "f1": 0.9725619834710744,
+      "precision": 0.9618701213780703,
+      "recall": 0.9834942125276838
     },
-    "YoudenJ": {
-      "threshold": 0.93,
-      "precision": 0.9856115107913669,
-      "recall": 0.817910447761194,
-      "f1": 0.8939641109298532,
-      "youden_j": 0.7831278390655418,
-      "roc_dist_to_top_left": 0.17952123544442866,
-      "tp": 274.0,
-      "fp": 4.0,
-      "tn": 111.0,
-      "fn": 61.0
+    "Youden": {
+      "threshold": 0.8400000000000001,
+      "youden_j": 0.8653777906091977,
+      "tpr": 0.9533659270402407,
+      "fpr": 0.087988136431043
     },
     "ROC_top_left": {
-      "threshold": 0.81,
-      "precision": 0.9548387096774194,
-      "recall": 0.8835820895522388,
-      "f1": 0.9178294573643411,
-      "youden_j": 0.7618429591174563,
-      "roc_dist_to_top_left": 0.16639538491613054,
-      "tp": 296.0,
-      "fp": 14.0,
-      "tn": 101.0,
-      "fn": 39.0
+      "threshold": 0.86,
+      "roc_dist_to_top_left": 0.09948526855334212,
+      "tpr": 0.9423342108562116,
+      "fpr": 0.08106772120612951
     }
   }
 }
