@@ -782,8 +782,10 @@ with tab1:
         with colC:
             if st.button("Reset inputs", key="sp_reset_btn"):
                 st.session_state["sp_row_cache"] = {}
-                for k in ["last_res", "agent_bundle", "last_prob", "last_pred", "last_thr",
-                          "last_model_key", "last_model_alias", "last_max_followup"]:
+                for k in [
+                    "last_res", "agent_bundle", "last_prob", "last_pred", "last_thr",
+                    "last_model_key", "last_model_alias", "last_max_followup"
+                ]:
                     st.session_state.pop(k, None)
                 st.success("Reset done. Go back to Step 2 to re-enter.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -809,7 +811,7 @@ with tab1:
             # Agentic validation
             agent_bundle = run_validation_agent(row)
 
-            # Explanation default (fast template) to avoid timeout
+            # Fast template explanation by default (prevents slow LLM causing delays)
             agent_bundle["agent_explanation"] = generate_explanation_template(prob, thr, row)
             agent_bundle["explanation_source"] = "template"
             st.session_state["agent_bundle"] = agent_bundle
@@ -821,7 +823,7 @@ with tab1:
                 with st.expander("See auto-filled features"):
                     st.write(missing_txt)
 
-            # Save to Google Sheets (non-blocking-ish with shorter payload)
+            # Save to Google Sheets (one row per prediction)
             payload = {
                 "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
                 "model_alias": model_alias,
@@ -843,7 +845,7 @@ with tab1:
             else:
                 st.info(msg)
 
-        # --- On-demand LLM Explanation (prevents timeouts on predict)
+        # --- On-demand LLM Explanation (prevents long calls during Predict)
         if do_explain and "last_prob" in st.session_state:
             prob = float(st.session_state["last_prob"])
             thr = float(st.session_state["last_thr"])
@@ -872,7 +874,6 @@ with tab1:
             st.markdown("### Result")
             st.write(f"**Model used:** {model_alias}")
 
-            # Visual risk bar
             st.progress(min(max(prob, 0.0), 1.0))
 
             label = "High risk (likely not suppressed)" if pred == 1 else "Lower risk (likely suppressed)"
@@ -881,14 +882,12 @@ with tab1:
             st.write(f"**Classification:** **{label}**")
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # Technical details (collapsed to reduce render cost)
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             st.markdown("### Technical details")
             with st.expander("Show prediction dataframe"):
                 st.dataframe(st.session_state["last_res"], use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # Agentic AI section
             agent_bundle = st.session_state.get("agent_bundle", None)
             if agent_bundle:
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
@@ -901,14 +900,11 @@ with tab1:
                     warns = agent_bundle.get("agent_warnings", [])
                     fixes = agent_bundle.get("agent_fixes", [])
                     if errs:
-                        st.error("Errors")
-                        st.write(errs)
+                        st.error("Errors"); st.write(errs)
                     if warns:
-                        st.warning("Warnings")
-                        st.write(warns)
+                        st.warning("Warnings"); st.write(warns)
                     if fixes:
-                        st.info("Suggested fixes")
-                        st.write(fixes)
+                        st.info("Suggested fixes"); st.write(fixes)
 
                 with tE:
                     src = agent_bundle.get("explanation_source", "template")
@@ -930,7 +926,6 @@ with tab1:
                     })
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # Admin-only download (restricted)
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             st.markdown("## 🔐 Admin-only: download latest inputs (debugging only)")
             if not admin_ok():
@@ -1005,7 +1000,6 @@ with tab2:
             st.dataframe(res.head(50), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # Download output
             out_csv = res.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "Download predictions CSV",
@@ -1014,7 +1008,6 @@ with tab2:
                 mime="text/csv",
             )
 
-            # Optional: LLM explanation for a sample row
             if batch_use_llm:
                 meta = available[model_key]["meta"]
                 thr = extract_bestf1_threshold(meta, 0.5)
@@ -1036,7 +1029,6 @@ with tab2:
                     st.write(generate_explanation_template(sample_prob, thr, sample_row))
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # Optional logging: summary only (avoid massive payload)
             if log_to_sheet:
                 meta = available[model_key]["meta"]
                 thr = extract_bestf1_threshold(meta, 0.5)
@@ -1058,5 +1050,4 @@ with tab2:
 
     else:
         st.info("Upload a CSV to run batch predictions.")
-
 
