@@ -99,7 +99,7 @@ st.markdown(
         font-weight: 700 !important;
       }
 
-      .stTextInput input, .stNumberInput input {
+      .stTextInput input, .stNumberInput input, .stTextArea textarea {
         background: #0b1220 !important;
         color: #e5e7eb !important;
         border-radius: 10px !important;
@@ -120,9 +120,9 @@ st.markdown(
 st.markdown(
     """
     <div class="title-card">
-      <h2 style="margin:0;">HIV Viral Suppression Risk (DeepANN Chain Models)</h2>
+      <h2 style="margin:0;">HIV Viral Suppression Risk (Chain Models)</h2>
       <div class="small-note">
-        T0 baseline + follow-up years • Auto-selects correct chain model • Uses BestF1 threshold from metadata • Optional Google Sheets logging
+        T0 baseline + follow-up years • Auto-selects correct chain model • Uses BestF1 threshold from metadata • Logs one row per prediction to Google Sheets
       </div>
     </div>
     """,
@@ -142,7 +142,7 @@ st.markdown(
 )
 
 # -------------------------
-# Admin gate (for restricted downloads)
+# Admin gate
 # -------------------------
 def admin_enabled() -> bool:
     return bool(st.secrets.get("ADMIN_PASSWORD", ""))
@@ -164,6 +164,11 @@ with st.sidebar:
                 st.session_state["admin_ok"] = False
                 st.error("Wrong password.")
 
+    st.markdown("---")
+    st.markdown("### ⚙️ Logging")
+    st.caption("Google Sheets logging is enabled when secrets are configured.")
+
+
 # -------------------------
 # Load available models
 # -------------------------
@@ -171,7 +176,6 @@ def list_available_models(models_dir: Path):
     out = {}
     if not models_dir.exists():
         return out
-
     for meta_file in models_dir.glob("*_metadata.json"):
         key = meta_file.name.replace("_metadata.json", "")
         keras_file = models_dir / f"{key}.keras"
@@ -191,6 +195,21 @@ if not available:
     st.stop()
 
 # -------------------------
+# Hide real model names from end-users (aliasing)
+# -------------------------
+MODEL_ALIAS_MAP = {
+    "DeepANN_T0_to_Y1": "Model A",
+    "DeepANN_T0Y1_to_Y2": "Model B",
+    "DeepANN_T0Y1Y2_to_Y3": "Model C",
+    "DeepANN_T0Y1Y2Y3_to_Y4": "Model D",
+    "DeepANN_T0Y1Y2Y3Y4_to_Y5": "Model E",
+}
+
+def model_alias(model_key: str) -> str:
+    return MODEL_ALIAS_MAP.get(model_key, "Model")
+
+
+# -------------------------
 # Helpers
 # -------------------------
 def extract_bestf1_threshold(meta: dict, fallback: float = 0.5) -> float:
@@ -204,10 +223,6 @@ def load_model_cached(path: str):
     return tf.keras.models.load_model(path)
 
 def detect_max_followup_year_from_cols(cols) -> int:
-    """
-    Returns max follow-up year present among Y1..Y4.
-    Requires T0 to be present for chain models, but we just detect Y-year max here.
-    """
     max_year = 0
     for y in [1, 2, 3, 4]:
         if any(str(c).endswith(f"_Y{y}") for c in cols):
@@ -215,12 +230,6 @@ def detect_max_followup_year_from_cols(cols) -> int:
     return max_year
 
 def choose_model_key_by_year(max_followup_year: int, keys: set):
-    """
-    max_followup_year = 0 means only T0 available -> predict Y1
-    1 means T0+Y1 -> predict Y2
-    ...
-    4 means T0..Y4 -> predict Y5
-    """
     if max_followup_year >= 4 and "DeepANN_T0Y1Y2Y3Y4_to_Y5" in keys:
         return "DeepANN_T0Y1Y2Y3Y4_to_Y5"
     if max_followup_year == 3 and "DeepANN_T0Y1Y2Y3_to_Y4" in keys:
@@ -241,7 +250,6 @@ def align_to_schema(df_in: pd.DataFrame, feature_cols: list, cat_cols: list, num
     X = df_in.copy()
     missing = [c for c in feature_cols if c not in X.columns]
 
-    # Fill missing with safe defaults
     for c in missing:
         if c in cat_cols:
             X[c] = "Unknown"
@@ -269,6 +277,7 @@ def to_model_input(X: pd.DataFrame, cat_cols: list, num_cols: list):
     for c in num_cols:
         arr = pd.to_numeric(X[c], errors="coerce").fillna(0.0).to_numpy().astype(np.float32).reshape(-1, 1)
         d[c] = tf.convert_to_tensor(arr, dtype=tf.float32)
+
     return d
 
 def predict_df(df_in: pd.DataFrame, model_info: dict):
@@ -298,11 +307,180 @@ def add_if_in_schema(row: dict, colname: str, value, schema_cols: set):
         row[colname] = value
 
 def timepoints(max_followup_year: int):
-    """Return list of suffixes in order: T0, Y1..Ymax"""
     suffixes = ["_T0"]
     for y in range(1, max_followup_year + 1):
         suffixes.append(f"_Y{y}")
     return suffixes
+
+
+# =========================
+# AGENTIC AI LAYER
+# =========================
+def agent_validate_row(row: dict, max_followup_year: int) -> dict:
+    errors, warnings, fixes = [], [], []
+    suffixes = timepoints(max_followup_year)
+
+    for suf in suffixes:
+        vl_key = f"viral_load{suf}"
+        log_key = f"log10_vl{suf}"
+        pct_key = f"pharmacy_refill_adherence_pct{suf}"
+        prop_key = f"adherence_prop{suf}"
+
+        if vl_key in row:
+            vl = float(row.get(vl_key, 0.0) or 0.0)
+            if vl < 0:
+                errors.append(f"{vl_key}: cannot be negative.")
+            if vl == 0:
+                warnings.append(f"{vl_key}: VL is 0 → log10_vl will be 0.000 (check missing VL).")
+
+        if (vl_key in row) and (log_key in row):
+            vl = float(row.get(vl_key, 0.0) or 0.0)
+            logvl = float(row.get(log_key, 0.0) or 0.0)
+            expected = round(math.log10(vl), 3) if vl > 0 else 0.0
+            if abs(logvl - expected) > 0.02:
+                warnings.append(f"{log_key}: mismatch with log10({vl_key}). Using computed value.")
+                row[log_key] = expected
+                fixes.append(f"Set {log_key}={expected} from {vl_key}.")
+
+        if pct_key in row:
+            pct = float(row.get(pct_key, 0.0) or 0.0)
+            if pct < 0 or pct > 100:
+                warnings.append(f"{pct_key}: out of range; capped to 0–100.")
+                pct = max(0.0, min(100.0, pct))
+                row[pct_key] = round(pct, 2)
+                fixes.append(f"Capped {pct_key} to {row[pct_key]}.")
+
+        if (pct_key in row) and (prop_key in row):
+            pct = float(row.get(pct_key, 0.0) or 0.0)
+            prop = float(row.get(prop_key, 0.0) or 0.0)
+            expected_prop = round(pct / 100.0, 4)
+            if abs(prop - expected_prop) > 0.01:
+                warnings.append(f"{prop_key}: mismatch with {pct_key}/100. Using computed value.")
+                row[prop_key] = expected_prop
+                fixes.append(f"Set {prop_key}={expected_prop} from {pct_key}.")
+
+        if prop_key in row:
+            prop = float(row.get(prop_key, 0.0) or 0.0)
+            if prop < 0 or prop > 1:
+                warnings.append(f"{prop_key}: out of range; capped to 0–1.")
+                prop = max(0.0, min(1.0, prop))
+                row[prop_key] = round(prop, 4)
+                fixes.append(f"Capped {prop_key} to {row[prop_key]}.")
+
+    ok = len(errors) == 0
+    return {"ok": ok, "errors": errors, "warnings": warnings, "fixes": fixes, "row": row}
+
+def agent_template_explanation(row: dict, prob_unsupp: float, pred_class: int, thr: float, max_followup_year: int) -> str:
+    # Use latest available timepoint for summary
+    suf = "_T0" if max_followup_year == 0 else f"_Y{max_followup_year}"
+
+    vl = row.get(f"viral_load{suf}", None)
+    logvl = row.get(f"log10_vl{suf}", None)
+    pct = row.get(f"pharmacy_refill_adherence_pct{suf}", None)
+    prop = row.get(f"adherence_prop{suf}", None)
+    missed = row.get(f"missed_appointments{suf}", None)
+    late = row.get(f"days_late{suf}", None)
+    cd4 = row.get(f"cd4{suf}", None)
+
+    risk_label = "Higher risk of non-suppression" if pred_class == 1 else "Lower risk of non-suppression"
+    lines = []
+    lines.append(f"**Summary:** {risk_label}.")
+    lines.append(f"Probability (unsuppressed risk) = **{prob_unsupp:.3f}** using threshold **{thr:.3f}**.")
+
+    lines.append("\n**Latest inputs used (program interpretation):**")
+    if vl is not None:
+        lines.append(f"- Viral load: **{vl}** (log10: **{logvl}**) — higher values generally increase risk.")
+    if pct is not None:
+        lines.append(f"- Refill adherence: **{pct}%** (prop: **{prop}**) — lower adherence generally increases risk.")
+    if missed is not None:
+        lines.append(f"- Missed appointments: **{missed}** — more missed visits can increase risk.")
+    if late is not None:
+        lines.append(f"- Days late: **{late}** — frequent delays can signal gaps in continuity.")
+    if cd4 is not None:
+        lines.append(f"- CD4: **{cd4}** — may correlate with risk depending on context.")
+
+    lines.append("\n**Suggested next program actions (non-clinical):**")
+    if pred_class == 1:
+        lines.append("- Prioritize adherence support / follow-up in routine workflow.")
+        lines.append("- Verify data completeness (VL, refill period, missed visits).")
+        lines.append("- Schedule routine review based on your SOP.")
+    else:
+        lines.append("- Continue routine follow-up per SOP.")
+        lines.append("- Maintain refill continuity and timely tracking.")
+
+    lines.append("\n*Note: Decision-support for program workflows; not diagnosis/treatment advice.*")
+    return "\n".join(lines)
+
+def llm_enabled() -> bool:
+    return bool(st.secrets.get("LLM_API_KEY", "")) and bool(st.secrets.get("LLM_BASE_URL", "")) and bool(st.secrets.get("LLM_MODEL", ""))
+
+def call_llm_narrative(prompt: str) -> str:
+    api_key = st.secrets.get("LLM_API_KEY")
+    base_url = st.secrets.get("LLM_BASE_URL", "").rstrip("/")
+    model = st.secrets.get("LLM_MODEL", "")
+
+    if not api_key or not base_url or not model:
+        return ""
+
+    url = f"{base_url}/chat/completions" if base_url.endswith("/v1") else f"{base_url}/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are an assistant embedded in a health program decision-support app. "
+                    "Do NOT provide diagnosis, treatment, dosing, or regimen advice. "
+                    "Keep outputs programmatic (data quality, follow-up prioritization, interpretation). "
+                    "Assume all data is de-identified. Keep it concise and clear."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.2,
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=12)
+        r.raise_for_status()
+        data = r.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return ""
+
+def agent_explain(row: dict, prob_unsupp: float, pred_class: int, thr: float, max_followup_year: int, use_llm: bool) -> str:
+    base = agent_template_explanation(row, prob_unsupp, pred_class, thr, max_followup_year)
+    if not use_llm:
+        return base
+    if not llm_enabled():
+        return base + "\n\n*(LLM not configured; showing standard explanation.)*"
+
+    prompt = (
+        "Rewrite the following explanation to be easier for a program manager to read. "
+        "Keep it non-clinical, avoid diagnosis/treatment, and preserve the key numbers.\n\n"
+        f"{base}"
+    )
+    improved = call_llm_narrative(prompt)
+    return improved if improved else base
+
+def agent_build_audit_record(row: dict, chosen_key: str, prob: float, pred: int, thr: float, max_followup_year: int) -> dict:
+    # latest suffix used
+    suf = "_T0" if max_followup_year == 0 else f"_Y{max_followup_year}"
+    return {
+        "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
+        "model_key": chosen_key,
+        "model_alias": model_alias(chosen_key),
+        "max_followup_year": int(max_followup_year),
+        "pred_prob_unsuppressed": float(prob),
+        "pred_class": int(pred),
+        "threshold": float(thr),
+        "viral_load_latest": row.get(f"viral_load{suf}", None),
+        "log10_vl_latest": row.get(f"log10_vl{suf}", None),
+        "refill_pct_latest": row.get(f"pharmacy_refill_adherence_pct{suf}", None),
+        "adherence_prop_latest": row.get(f"adherence_prop{suf}", None),
+    }
+
 
 # -------------------------
 # Google Sheets logging (webhook)
@@ -312,22 +490,36 @@ def gsheet_enabled() -> bool:
 
 def send_to_gsheet(payload: dict) -> tuple[bool, str]:
     if not gsheet_enabled():
-        return False, "Google Sheets not configured."
+        return False, "Google Sheets not configured (missing secrets)."
     try:
         url = st.secrets["GSHEETS_WEBHOOK_URL"]
         token = st.secrets["GSHEETS_TOKEN"]
+
         payload = dict(payload)
         payload["token"] = token
 
-        r = requests.post(url, json=payload, timeout=10)
+        r = requests.post(url, json=payload, timeout=15)
+
+        # Some Apps Script deployments return 302/303 redirects; treat those as failure with hint.
         if r.status_code != 200:
-            return False, f"Webhook HTTP {r.status_code}"
-        data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+            detail = r.text[:250] if r.text else ""
+            return False, f"Webhook HTTP {r.status_code}. {detail}"
+
+        # Apps Script usually returns JSON
+        try:
+            data = r.json()
+        except Exception:
+            # if content-type is text/html etc.
+            snippet = (r.text or "")[:250]
+            return False, f"Webhook returned non-JSON response: {snippet}"
+
         if data.get("status") != "success":
             return False, f"Webhook response: {data}"
+
         return True, "Saved to Google Sheet."
     except Exception as e:
         return False, f"Sheets error: {e}"
+
 
 # -------------------------
 # Tabs
@@ -337,7 +529,7 @@ tab1, tab2 = st.tabs(["🧍 Single patient form", "📤 Upload CSV (batch)"])
 with tab1:
     st.subheader("Single patient form (T0 baseline → follow-up years)")
     st.markdown(
-        "<div class='small-note'>You MUST enter T0 baseline first. Then add follow-up years if you have them. The app auto-selects the correct chain model.</div>",
+        "<div class='small-note'>Enter T0 baseline first. Add follow-up years if available. The app auto-selects the correct chain model.</div>",
         unsafe_allow_html=True,
     )
 
@@ -351,13 +543,22 @@ with tab1:
 
     chosen_key = choose_model_key_by_year(max_followup_year, available_keys)
     if not chosen_key:
-        st.error("No matching model found for the selected time window. Confirm your model filenames in models/.")
+        st.error("No matching model found for the selected time window. Confirm model filenames in models/.")
         st.stop()
 
     meta = available[chosen_key]["meta"]
     schema_cols = set(meta["feature_cols"])
 
-    st.success(f"Auto-selected model: {chosen_key}")
+    # Show only alias publicly
+    st.success(f"Auto-selected model: {model_alias(chosen_key)}")
+
+    # LLM toggle affects explanation generation
+    use_llm = st.toggle(
+        "Use AI narrative (LLM) for explanation",
+        value=st.session_state.get("use_llm", False),
+        key="use_llm",
+        help="Optional. Requires LLM secrets configured. If not configured, standard explanation is used.",
+    )
 
     row = {}
     with st.container():
@@ -404,7 +605,6 @@ with tab1:
                     )
                     add_if_in_schema(row, f"viral_load{suf}", float(vl), schema_cols)
 
-                # log10
                 n4, n5, n6 = st.columns(3)
                 with n4:
                     logvl = round(math.log10(vl), 3) if vl > 0 else 0.0
@@ -479,7 +679,6 @@ with tab1:
                 )
                 add_if_in_schema(row, f"days_late{suf}", float(late), schema_cols)
 
-                # baseline age only at T0 (if exists in schema)
                 if suf == "_T0":
                     base_age = st.number_input(
                         "age_baseline_T0",
@@ -550,7 +749,7 @@ with tab1:
                     )
                     add_if_in_schema(row, f"who_stage{suf}", who, schema_cols)
 
-                # ✅ OPEN ENTRY (not dropdown)
+                # ✅ OPEN ENTRY (not dropdown) for retraining data capture
                 c7, c8, c9 = st.columns(3)
                 with c7:
                     state = st.text_input(
@@ -582,10 +781,14 @@ with tab1:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # -------------------------
+    # Predict button
+    # -------------------------
     if st.button("Predict (Single Patient)", type="primary", key="sp_predict_btn"):
         df1 = pd.DataFrame([row])
         res = predict_df(df1, available[chosen_key])
 
+        # Save prediction to session
         st.session_state["last_row"] = row
         st.session_state["last_res"] = res
         st.session_state["last_prob"] = float(res.loc[0, "pred_prob_unsuppressed"])
@@ -594,32 +797,76 @@ with tab1:
         st.session_state["last_model_key"] = chosen_key
         st.session_state["last_max_followup"] = int(max_followup_year)
 
-        # Missing features warning (now correct)
+        # Run agent validation + explanation immediately (so it can be logged in same row)
+        v = agent_validate_row(dict(row), int(max_followup_year))
+        st.session_state["agent_validation"] = v
+
+        explanation = agent_explain(
+            row=v["row"],
+            prob_unsupp=st.session_state["last_prob"],
+            pred_class=st.session_state["last_pred"],
+            thr=st.session_state["last_thr"],
+            max_followup_year=int(max_followup_year),
+            use_llm=use_llm,
+        )
+        st.session_state["agent_explanation"] = explanation
+
+        audit = agent_build_audit_record(
+            row=v["row"],
+            chosen_key=chosen_key,
+            prob=st.session_state["last_prob"],
+            pred=st.session_state["last_pred"],
+            thr=st.session_state["last_thr"],
+            max_followup_year=int(max_followup_year),
+        )
+        st.session_state.setdefault("audit_log", [])
+        st.session_state["audit_log"].append(audit)
+
+        # Missing features warning
         missing_txt = str(res.loc[0, "missing_features_filled"] or "").strip()
         if missing_txt:
             st.warning("Some model features were not provided and were auto-filled with defaults.")
             st.write("Auto-filled features:", missing_txt)
 
-        # ✅ Google Sheets logging (one row per prediction)
+        # ✅ Google Sheets logging (ONE ROW PER PREDICTION)
         payload = {
             "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
-            "model_name": chosen_key,
+
+            # log real model key for YOU (not displayed to end-user)
+            "model_key": chosen_key,
+            "model_alias": model_alias(chosen_key),
+
             "prediction": int(st.session_state["last_pred"]),
             "probability": float(st.session_state["last_prob"]),
             "threshold": float(st.session_state["last_thr"]),
             "max_followup_year": int(max_followup_year),
+
+            # store main identifiers at T0 (good for grouping)
             "state": row.get("stateProvince_T0", "Unknown"),
             "facility": row.get("facilityName_T0", "Unknown"),
-            "agent_note": st.session_state.get("agent_explanation", ""),
-            "inputs_json": json.dumps(row),
+
+            # agent outputs
+            "agent_ok": bool(v["ok"]),
+            "agent_errors": "\n".join(v["errors"]) if v["errors"] else "",
+            "agent_warnings": "\n".join(v["warnings"]) if v["warnings"] else "",
+            "agent_fixes": "\n".join(v["fixes"]) if v["fixes"] else "",
+            "agent_note": explanation,
+
+            # full raw inputs (json)
+            "inputs_json": json.dumps(v["row"], ensure_ascii=False),
         }
 
         ok, msg = send_to_gsheet(payload)
         if ok:
             st.success(msg)
         else:
-            st.info(msg)
+            st.warning(msg)
+            if admin_ok():
+                st.caption("Admin hint: check Apps Script deployment access = 'Anyone', and token match in secrets vs Script Properties.")
 
+    # -------------------------
+    # Results + Agent UI
+    # -------------------------
     if "last_res" in st.session_state:
         prob = st.session_state["last_prob"]
         pred = st.session_state["last_pred"]
@@ -631,8 +878,9 @@ with tab1:
             st.markdown("### Result")
             st.write({
                 "Predicted probability (unsuppressed risk)": prob,
-                "BestF1 threshold used": thr,
+                "Threshold used": thr,
                 "Predicted class (1 = at-risk/not suppressed, 0 = likely suppressed)": pred,
+                "Model used": model_alias(st.session_state["last_model_key"]),  # alias only
             })
             st.markdown("</div>", unsafe_allow_html=True)
 
@@ -642,21 +890,86 @@ with tab1:
             st.dataframe(st.session_state["last_res"])
             st.markdown("</div>", unsafe_allow_html=True)
 
+        st.markdown("## 🤖 Agentic AI (Validation → Explanation → Audit)")
+
+        a1, a2, a3 = st.columns(3)
+
+        with a1:
+            if st.button("1) Re-run Validation Agent", key="agent_validate_btn"):
+                v = agent_validate_row(dict(st.session_state["last_row"]), st.session_state["last_max_followup"])
+                st.session_state["agent_validation"] = v
+                if v["errors"]:
+                    st.error("Validation errors found.")
+                elif v["warnings"]:
+                    st.warning("Validation completed with warnings.")
+                else:
+                    st.success("Validation passed (no errors).")
+
+        with a2:
+            if st.button("2) Re-generate Explanation Agent", key="agent_explain_btn"):
+                v = st.session_state.get("agent_validation")
+                row_for_explain = v["row"] if v else st.session_state["last_row"]
+
+                explanation = agent_explain(
+                    row=row_for_explain,
+                    prob_unsupp=st.session_state["last_prob"],
+                    pred_class=st.session_state["last_pred"],
+                    thr=st.session_state["last_thr"],
+                    max_followup_year=st.session_state["last_max_followup"],
+                    use_llm=st.session_state.get("use_llm", False),
+                )
+                st.session_state["agent_explanation"] = explanation
+                st.success("Explanation generated (note: Google Sheet row is not updated; it remains one row per prediction).")
+
+        with a3:
+            if st.button("3) Create Audit Record (session)", key="agent_audit_btn"):
+                v = st.session_state.get("agent_validation")
+                row_for_audit = v["row"] if v else st.session_state["last_row"]
+
+                audit = agent_build_audit_record(
+                    row=row_for_audit,
+                    chosen_key=st.session_state["last_model_key"],
+                    prob=st.session_state["last_prob"],
+                    pred=st.session_state["last_pred"],
+                    thr=st.session_state["last_thr"],
+                    max_followup_year=st.session_state["last_max_followup"],
+                )
+                st.session_state.setdefault("audit_log", [])
+                st.session_state["audit_log"].append(audit)
+                st.success("Audit record added (session).")
+
+        v = st.session_state.get("agent_validation")
+        if v:
+            if v["errors"]:
+                st.error("**Errors:**\n" + "\n".join([f"- {e}" for e in v["errors"]]))
+            if v["warnings"]:
+                st.warning("**Warnings:**\n" + "\n".join([f"- {w}" for w in v["warnings"]]))
+            if v["fixes"]:
+                st.info("**Auto-fixes applied:**\n" + "\n".join([f"- {f}" for f in v["fixes"]]))
+
+        explanation = st.session_state.get("agent_explanation")
+        if explanation:
+            st.markdown("### Explanation")
+            st.markdown(explanation)
+
+        if st.session_state.get("audit_log"):
+            st.markdown("### Audit log (this session)")
+            st.dataframe(pd.DataFrame(st.session_state["audit_log"]))
+
         # ✅ Admin-only dataset export (restricted)
-        st.markdown("## 🔐 Admin-only: download rows for retraining")
+        st.markdown("## 🔐 Admin-only: download latest inputs (for debugging only)")
         if not admin_ok():
             st.info("Admin locked. Use sidebar to unlock.")
         else:
-            # This exports the *current session* predictions if you store them,
-            # but your main source of truth is the Google Sheet.
-            if st.button("Download current-session prediction JSON (admin)"):
-                blob = json.dumps(st.session_state.get("last_row", {}), indent=2).encode("utf-8")
-                st.download_button(
-                    "Download JSON",
-                    data=blob,
-                    file_name="latest_prediction_inputs.json",
-                    mime="application/json",
-                )
+            st.download_button(
+                "Download latest prediction inputs JSON",
+                data=json.dumps(st.session_state.get("last_row", {}), indent=2).encode("utf-8"),
+                file_name="latest_prediction_inputs.json",
+                mime="application/json",
+            )
+    else:
+        st.info("Run a prediction first to see results and agentic AI outputs.")
+
 
 with tab2:
     st.subheader("Batch scoring (Upload CSV)")
@@ -673,10 +986,10 @@ with tab2:
 
         chosen_key = choose_model_key_from_df(df_up, available_keys)
         if not chosen_key:
-            st.error("Could not auto-select a model. Ensure your CSV has T0 and optional Y1..Y4 columns.")
+            st.error("Could not auto-select a model. Ensure CSV has T0 and optional Y1..Y4 columns.")
             st.stop()
 
-        st.success(f"Auto-selected model: {chosen_key}")
+        st.success(f"Auto-selected model: {model_alias(chosen_key)}")
 
         if st.button("Run batch predictions", type="primary", key="batch_predict_btn"):
             res = predict_df(df_up, available[chosen_key])
@@ -686,7 +999,7 @@ with tab2:
             st.download_button(
                 "Download predictions CSV",
                 data=out_csv,
-                file_name=f"predictions_{chosen_key}.csv",
+                file_name="predictions.csv",  # generic name
                 mime="text/csv",
                 key="batch_download_btn",
             )
