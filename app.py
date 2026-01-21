@@ -1,12 +1,13 @@
 # ============================================================
-# app.py — HIV Viral Suppression Risk (DeepANN Chain Models)
-# UPGRADED:
-# 1) stateProvince_Y* and facilityName_Y* are OPEN TEXT (not dropdowns)
-# 2) Logs ONE ROW PER PREDICTION to:
-#    - Session log (download CSV)
-#    - Google Sheet (webhook via Apps Script)
-# 3) Stores: user inputs + model output + agent notes (validation + explanation + audit)
-# 4) Auto-selects correct model based on max year available
+# app.py — HIV Viral Suppression Risk (Chain Models)
+# UPGRADED (Jan 2026):
+# 1) Fixes T0 naming mismatch (_Y0 vs _T0) so baseline features are captured correctly
+# 2) Download entries (retraining CSV) = ADMIN ONLY
+# 3) Agentic AI tools = PREMIUM ONLY
+# 4) Hide internal model names; show friendly aliases only
+# 5) Remove "DeepANN" from title and remove "(executive-friendly)"
+# 6) Disclaimer reframed as research + decision-support, not standalone clinical
+# 7) UI polish for desktop + mobile friendliness (Flutter WebView-ready)
 # ============================================================
 
 import json
@@ -22,11 +23,13 @@ import streamlit as st
 import tensorflow as tf
 import requests
 
+
 # -------------------------
 # PATHS
 # -------------------------
 BASE_DIR = Path(__file__).resolve().parent
 MODELS_DIR = BASE_DIR / "models"
+
 
 # -------------------------
 # DROPDOWN OPTIONS
@@ -39,17 +42,30 @@ OPTIONS = {
     "regimen_type": ["AZT/3TC/NVP", "TDF/3TC/DTG", "TDF/3TC/EFV", "AZT/3TC/LPV/r"],
     "tb_status": ["History of TB", "Active TB", "No TB"],
     "gender": ["Male", "Female"],
-    # NOTE: stateProvince and facilityName now OPEN TEXT in the form
+    # NOTE: stateProvince and facilityName are OPEN TEXT
 }
+
+
+# -------------------------
+# MODEL ALIASES (hide internal keys)
+# -------------------------
+MODEL_ALIAS = {
+    "DeepANN_T0_to_Y1": "Baseline → Year 1 Risk Model (v1)",
+    "DeepANN_T0Y1_to_Y2": "Baseline+Y1 → Year 2 Risk Model (v1)",
+    "DeepANN_T0Y1Y2_to_Y3": "Baseline+Y1+Y2 → Year 3 Risk Model (v1)",
+    "DeepANN_T0Y1Y2Y3_to_Y4": "Baseline+Y1+Y2+Y3 → Year 4 Risk Model (v1)",
+    "DeepANN_T0Y1Y2Y3Y4_to_Y5": "Baseline+Y1–Y4 → Year 5 Risk Model (v1)",
+}
+
 
 # -------------------------
 # VARIABLE DEFINITIONS (tooltips)
 # -------------------------
 VAR_HELP = {
     "age": "Client age in completed years (0–120).",
-    "age_baseline": "Baseline age in completed years recorded at Year 1.",
+    "age_baseline": "Baseline age in completed years recorded at Year 1 (if available in the model schema).",
     "cd4": "CD4 cell count (cells/mm³).",
-    "viral_load": "Viral load in copies/mL. Must be > 0 to compute log10(VL).",
+    "viral_load": "Viral load in copies/mL (must be ≥ 0). log10(VL) is computed automatically when VL > 0.",
     "log10_vl": "Auto-calculated as log10(viral_load). Not entered manually.",
     "weight": "Weight in kilograms (kg).",
     "missed_appointments": "Number of missed appointments within the assessment period.",
@@ -69,6 +85,7 @@ VAR_HELP = {
     "suppressed_lt1000": "Whether viral load is suppressed below 1000 copies/mL (0=No, 1=Yes).",
 }
 
+
 # -------------------------
 # UI
 # -------------------------
@@ -78,7 +95,7 @@ st.markdown(
     """
     <style>
       .stApp { background: #0b0f14; color: #e5e7eb; }
-      .block-container { padding-top: 1.2rem; }
+      .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
 
       .title-card {
         background: #0f172a;
@@ -154,9 +171,9 @@ st.markdown(
 st.markdown(
     """
     <div class="title-card">
-      <h2 style="margin:0;">HIV Viral Suppression Risk (DeepANN Model)</h2>
+      <h2 style="margin:0;">HIV Viral Suppression Risk</h2>
       <div class="small-note">
-        Single patient form + Batch CSV scoring • Auto-selects the right model based on available year columns • Uses BestF1 threshold from metadata
+        Single patient form + Batch CSV scoring • Auto-selects the correct model based on available timepoints • Uses model threshold from metadata
       </div>
     </div>
     """,
@@ -168,18 +185,80 @@ st.markdown(
     <div class="metric-card" style="margin-bottom:14px;">
       <b>Disclaimer</b><br/>
       <span class="small-note">
-        This is a <b>viral suppression risk prediction</b> demo developed using a <b>simulated dataset</b>.
-        Outputs are for demonstration, research, and decision-support exploration only and must <b>not</b> be used as a standalone basis for clinical decisions.
-        Interpret results alongside clinical guidelines, laboratory results, and professional judgement.
+        This tool is designed for <b>research</b> and <b>program decision-support</b>. It can help summarize patterns and estimate risk using the provided inputs.
+        It is <b>not</b> a standalone clinical decision system and must <b>not</b> replace clinical judgement, laboratory confirmation, or local guidelines.
+        Always interpret outputs within routine program workflows and professional oversight.
       </span>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
+
+# ============================================================
+# ACCESS CONTROL (Admin + Premium)
+# - Admin: can download retraining entries
+# - Premium: can use Agentic AI tools
+# ============================================================
+
+def _truthy(x) -> bool:
+    return str(x).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+def is_admin() -> bool:
+    return bool(st.session_state.get("is_admin", False))
+
+def is_premium() -> bool:
+    return bool(st.session_state.get("is_premium", False))
+
+with st.sidebar:
+    st.markdown("### Access")
+    st.caption("Admin controls downloads. Premium controls Agentic AI tools.")
+
+    # Admin gate
+    if st.secrets.get("ADMIN_PASSWORD", ""):
+        admin_pwd = st.text_input("Admin password", type="password", key="admin_pwd")
+        if st.button("Unlock Admin", key="unlock_admin"):
+            if admin_pwd == st.secrets.get("ADMIN_PASSWORD", ""):
+                st.session_state["is_admin"] = True
+                st.success("Admin unlocked.")
+            else:
+                st.session_state["is_admin"] = False
+                st.error("Incorrect admin password.")
+    else:
+        st.caption("Admin password not configured in secrets (downloads will remain locked).")
+
+    st.divider()
+
+    # Premium gate
+    # Option A: single premium code
+    premium_code_secret = st.secrets.get("PREMIUM_ACCESS_CODE", "")
+    # Option B: comma-separated codes
+    premium_codes_secret = st.secrets.get("PREMIUM_ACCESS_CODES", "")
+
+    premium_input = st.text_input("Premium access code", type="password", key="premium_code")
+    if st.button("Unlock Premium", key="unlock_premium"):
+        valid = False
+        if premium_code_secret and premium_input == premium_code_secret:
+            valid = True
+        if premium_codes_secret:
+            codes = [c.strip() for c in premium_codes_secret.split(",") if c.strip()]
+            if premium_input in codes:
+                valid = True
+
+        if valid:
+            st.session_state["is_premium"] = True
+            st.success("Premium unlocked.")
+        else:
+            st.session_state["is_premium"] = False
+            st.error("Invalid premium code.")
+
+    st.divider()
+    st.markdown("### Status")
+    st.write({"admin": is_admin(), "premium": is_premium()})
+
+
 # ============================================================
 # GOOGLE SHEETS LOGGING (Webhook via Apps Script)
-# One row per prediction: inputs + outputs + agent notes
 # ============================================================
 
 def _now_iso():
@@ -235,12 +314,14 @@ def list_available_models(models_dir: Path):
                 pass
     return out
 
+
 available = list_available_models(MODELS_DIR)
 available_keys = set(available.keys())
 
 if not available:
     st.error("No models found in models/. Put your .keras and *_metadata.json files inside the models/ folder.")
     st.stop()
+
 
 # ============================================================
 # Helpers (model selection, schema alignment, prediction)
@@ -252,20 +333,38 @@ def extract_bestf1_threshold(meta: dict, fallback: float = 0.5) -> float:
     except Exception:
         return fallback
 
+
 @st.cache_resource
 def load_model_cached(path: str):
     return tf.keras.models.load_model(path)
 
+
 def detect_max_year_from_cols(cols) -> int:
-    max_year = 0
-    for y in [0, 1, 2, 3, 4]:  # keep 0 for safety if T0 exists
+    """
+    Detects max timepoint based on suffix:
+      - _Y0, _Y1.._Y4
+      - or _T0 for baseline
+    Returns:
+      0..4
+    """
+    max_year = -1
+
+    # If T0 exists, treat as baseline (0)
+    if any(str(c).endswith("_T0") for c in cols):
+        max_year = max(max_year, 0)
+
+    # Standard Y0..Y4
+    for y in [0, 1, 2, 3, 4]:
         if any(str(c).endswith(f"_Y{y}") for c in cols):
             max_year = max(max_year, y)
-    return max_year
+
+    # If nothing matched, fallback to 0 (baseline) for safety
+    return max(0, max_year)
+
 
 def choose_model_key_by_year(max_year: int, keys: set):
     """
-    Your saved model tags (based on your training output):
+    Your saved model tags:
     - DeepANN_T0_to_Y1
     - DeepANN_T0Y1_to_Y2
     - DeepANN_T0Y1Y2_to_Y3
@@ -284,11 +383,20 @@ def choose_model_key_by_year(max_year: int, keys: set):
         return "DeepANN_T0_to_Y1"
     return None
 
+
 def choose_model_key_from_df(df: pd.DataFrame, keys: set):
     max_year = detect_max_year_from_cols(df.columns)
     return choose_model_key_by_year(max_year, keys)
 
+
+def model_alias(key: str) -> str:
+    return MODEL_ALIAS.get(key, "HIV Risk Model")
+
+
 def align_to_schema(df_in: pd.DataFrame, feature_cols: list, cat_cols: list, num_cols: list):
+    """
+    Align incoming df to model schema. Missing columns are filled with defaults.
+    """
     X = df_in.copy()
     missing = [c for c in feature_cols if c not in X.columns]
 
@@ -310,17 +418,21 @@ def align_to_schema(df_in: pd.DataFrame, feature_cols: list, cat_cols: list, num
 
     return X, missing
 
+
 def to_model_input(X: pd.DataFrame, cat_cols: list, num_cols: list):
     d = {}
+    # Categorical -> tf.string tensor
     for c in cat_cols:
         arr = X[c].fillna("Unknown").astype(str).to_numpy().reshape(-1, 1)
         d[c] = tf.convert_to_tensor(arr, dtype=tf.string)
 
+    # Numeric -> tf.float32 tensor
     for c in num_cols:
         arr = pd.to_numeric(X[c], errors="coerce").fillna(0.0).to_numpy().astype(np.float32).reshape(-1, 1)
         d[c] = tf.convert_to_tensor(arr, dtype=tf.float32)
 
     return d
+
 
 def predict_df(df_in: pd.DataFrame, model_info: dict):
     meta = model_info["meta"]
@@ -344,22 +456,60 @@ def predict_df(df_in: pd.DataFrame, model_info: dict):
     out["missing_features_filled"] = ", ".join(missing) if missing else ""
     return out
 
+
 def add_if_in_schema(row: dict, colname: str, value, schema_cols: set):
     if colname in schema_cols:
         row[colname] = value
 
+
 # ============================================================
-# Agentic AI Layer (Validation → Explanation → Audit)
+# Baseline timepoint handling (T0 vs Y0)
 # ============================================================
 
-def agent_validate_row(row: dict, max_year: int) -> dict:
+def time_suffix_for_schema(schema_cols: set, timepoint: int) -> str:
+    """
+    Your UI uses Y0 for baseline, but some schemas may store baseline columns as _T0.
+    This helper chooses the correct suffix for baseline based on schema.
+    timepoint:
+      0 => baseline
+      1..4 => year
+    Returns suffix like "Y0" or "T0" or "Y1"
+    """
+    if timepoint == 0:
+        # if schema has *_T0 anywhere, use T0; else use Y0
+        has_t0 = any(str(c).endswith("_T0") for c in schema_cols)
+        return "T0" if has_t0 else "Y0"
+    return f"Y{timepoint}"
+
+
+def col(schema_cols: set, base: str, timepoint: int) -> str:
+    """
+    Construct column name that matches schema for a base variable name and timepoint.
+    e.g. col(schema_cols, "viral_load", 0) => viral_load_T0 or viral_load_Y0
+    """
+    suf = time_suffix_for_schema(schema_cols, timepoint)
+    return f"{base}_{suf}"
+
+# ============================================================
+# Agentic AI Layer (Validation → Explanation → Audit)
+# PREMIUM ONLY (gated in UI)
+# ============================================================
+
+def agent_validate_row(row: dict, schema_cols: set, max_year: int) -> dict:
+    """
+    Validates and auto-fixes:
+    - log10_vl derived from viral_load
+    - adherence_prop derived from pharmacy_refill_adherence_pct
+    - caps ranges
+    Works for baseline even if schema uses _T0 instead of _Y0.
+    """
     errors, warnings, fixes = [], [], []
-    # validate across all years provided (0..max_year)
+
     for y in range(0, max_year + 1):
-        vl_key = f"viral_load_Y{y}"
-        log_key = f"log10_vl_Y{y}"
-        pct_key = f"pharmacy_refill_adherence_pct_Y{y}"
-        prop_key = f"adherence_prop_Y{y}"
+        vl_key = col(schema_cols, "viral_load", y)
+        log_key = col(schema_cols, "log10_vl", y)
+        pct_key = col(schema_cols, "pharmacy_refill_adherence_pct", y)
+        prop_key = col(schema_cols, "adherence_prop", y)
 
         if vl_key in row:
             vl = float(row.get(vl_key, 0.0))
@@ -405,49 +555,63 @@ def agent_validate_row(row: dict, max_year: int) -> dict:
     ok = len(errors) == 0
     return {"ok": ok, "errors": errors, "warnings": warnings, "fixes": fixes, "row": row}
 
-def agent_template_explanation(row: dict, prob_unsupp: float, pred_class: int, thr: float, max_year: int) -> str:
+
+def agent_template_explanation(row: dict, schema_cols: set, prob_unsupp: float, pred_class: int, thr: float, max_year: int) -> str:
+    """
+    Non-clinical explanation template (program decision-support).
+    Uses latest year timepoint (max_year) and schema-aware keys.
+    """
     y = max_year
-    vl = row.get(f"viral_load_Y{y}", None)
-    logvl = row.get(f"log10_vl_Y{y}", None)
-    pct = row.get(f"pharmacy_refill_adherence_pct_Y{y}", None)
-    prop = row.get(f"adherence_prop_Y{y}", None)
-    missed = row.get(f"missed_appointments_Y{y}", None)
-    late = row.get(f"days_late_Y{y}", None)
-    cd4 = row.get(f"cd4_Y{y}", None)
+
+    vl = row.get(col(schema_cols, "viral_load", y), None)
+    logvl = row.get(col(schema_cols, "log10_vl", y), None)
+    pct = row.get(col(schema_cols, "pharmacy_refill_adherence_pct", y), None)
+    prop = row.get(col(schema_cols, "adherence_prop", y), None)
+
+    missed = row.get(col(schema_cols, "missed_appointments", y), None)
+    late = row.get(col(schema_cols, "days_late", y), None)
+    cd4 = row.get(col(schema_cols, "cd4", y), None)
 
     risk_label = "Higher risk of non-suppression" if pred_class == 1 else "Lower risk of non-suppression"
+
     lines = []
     lines.append(f"**Summary:** {risk_label}.")
     lines.append(f"Model probability (unsuppressed risk) = **{prob_unsupp:.3f}** (threshold **{thr:.3f}**).")
 
-    lines.append("\n**Key factors from latest year inputs (program interpretation):**")
+    lines.append("\n**Key signals from the latest timepoint (program interpretation):**")
     if vl is not None:
-        lines.append(f"- Viral load: **{vl}** (log10: **{logvl}**) — higher values generally increase risk.")
+        lines.append(f"- Viral load: **{vl}** (log10: **{logvl}**). Higher values generally increase risk.")
     if pct is not None:
-        lines.append(f"- Refill adherence: **{pct}%** (prop: **{prop}**) — lower adherence generally increases risk.")
+        lines.append(f"- Refill adherence: **{pct}%** (prop: **{prop}**). Lower adherence generally increases risk.")
     if missed is not None:
-        lines.append(f"- Missed appointments: **{missed}** — more missed visits can increase risk.")
+        lines.append(f"- Missed appointments: **{missed}**. More missed visits may increase risk.")
     if late is not None:
-        lines.append(f"- Days late: **{late}** — frequent delays can signal gaps in continuity.")
+        lines.append(f"- Days late: **{late}**. Frequent delays can signal gaps in continuity.")
     if cd4 is not None:
-        lines.append(f"- CD4: **{cd4}** — may correlate with risk depending on context.")
+        lines.append(f"- CD4: **{cd4}**. Interpretation depends on clinical context and timing.")
 
     lines.append("\n**Suggested next program actions (non-clinical):**")
     if pred_class == 1:
-        lines.append("- Prioritize adherence support / follow-up for this client in routine workflow.")
-        lines.append("- Verify data completeness (VL, refill period definition, missed visits).")
-        lines.append("- Schedule follow-up review based on your program SOP.")
+        lines.append("- Prioritize adherence support and routine follow-up in the program workflow.")
+        lines.append("- Verify data completeness (VL, refill period definition, missed visit tracking).")
+        lines.append("- Consider a targeted review per your SOP (no treatment recommendations here).")
     else:
-        lines.append("- Continue routine follow-up per program SOP.")
-        lines.append("- Maintain refill continuity and timely visit tracking.")
+        lines.append("- Continue routine follow-up per SOP.")
+        lines.append("- Maintain refill continuity and timely visit monitoring.")
 
     lines.append("\n*Decision-support only; not a diagnosis or treatment recommendation.*")
     return "\n".join(lines)
 
+
 def llm_enabled() -> bool:
     return bool(st.secrets.get("LLM_API_KEY", "")) and bool(st.secrets.get("LLM_BASE_URL", "")) and bool(st.secrets.get("LLM_MODEL", ""))
 
+
 def call_llm_narrative(prompt: str) -> str:
+    """
+    Optional LLM (e.g., DeepSeek / OpenAI-compatible endpoint).
+    Only used when enabled and premium user toggles it.
+    """
     api_key = st.secrets.get("LLM_API_KEY")
     base_url = st.secrets.get("LLM_BASE_URL", "").rstrip("/")
     model = st.secrets.get("LLM_MODEL", "")
@@ -467,9 +631,9 @@ def call_llm_narrative(prompt: str) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are an assistant embedded in a health program decision-support app. "
+                    "You are an assistant embedded in a health program decision-support tool. "
                     "Do NOT provide diagnosis, treatment, dosing, or regimen advice. "
-                    "Keep outputs programmatic (data quality, follow-up prioritization, interpretation). "
+                    "Keep outputs programmatic (data quality checks, follow-up prioritization, interpretation). "
                     "Assume all data is de-identified. Keep it concise and clear."
                 ),
             },
@@ -486,12 +650,14 @@ def call_llm_narrative(prompt: str) -> str:
     except Exception:
         return ""
 
-def agent_explain(row: dict, prob_unsupp: float, pred_class: int, thr: float, max_year: int, use_llm: bool) -> str:
-    base = agent_template_explanation(row, prob_unsupp, pred_class, thr, max_year)
+
+def agent_explain(row: dict, schema_cols: set, prob_unsupp: float, pred_class: int, thr: float, max_year: int, use_llm: bool) -> str:
+    base = agent_template_explanation(row, schema_cols, prob_unsupp, pred_class, thr, max_year)
     if not use_llm:
         return base
     if not llm_enabled():
         return base + "\n\n*(LLM not configured; showing standard explanation.)*"
+
     prompt = (
         "Rewrite the following explanation to be easier for a program manager to read. "
         "Keep it non-clinical, avoid diagnosis/treatment, and preserve the key numbers.\n\n"
@@ -500,19 +666,26 @@ def agent_explain(row: dict, prob_unsupp: float, pred_class: int, thr: float, ma
     improved = call_llm_narrative(prompt)
     return improved if improved else base
 
-def agent_build_audit_record(row: dict, chosen_key: str, prob: float, pred: int, thr: float, max_year: int) -> dict:
+
+def agent_build_audit_record(row: dict, schema_cols: set, chosen_key: str, prob: float, pred: int, thr: float, max_year: int) -> dict:
+    """
+    FIXED: uses schema-aware keys, so baseline T0 fields will not show NULL
+    if your schema expects _T0 and you actually recorded them.
+    """
     y = max_year
+
     return {
         "timestamp": _now_iso(),
-        "model_key": chosen_key,
-        "max_year": int(max_year),
+        "model_alias": model_alias(chosen_key),
+        "max_timepoint": int(max_year),
         "pred_prob_unsuppressed": float(prob),
         "pred_class": int(pred),
         "threshold": float(thr),
-        "viral_load_latest": row.get(f"viral_load_Y{y}", None),
-        "log10_vl_latest": row.get(f"log10_vl_Y{y}", None),
-        "refill_pct_latest": row.get(f"pharmacy_refill_adherence_pct_Y{y}", None),
-        "adherence_prop_latest": row.get(f"adherence_prop_Y{y}", None),
+
+        "viral_load_latest": row.get(col(schema_cols, "viral_load", y), None),
+        "log10_vl_latest": row.get(col(schema_cols, "log10_vl", y), None),
+        "refill_pct_latest": row.get(col(schema_cols, "pharmacy_refill_adherence_pct", y), None),
+        "adherence_prop_latest": row.get(col(schema_cols, "adherence_prop", y), None),
     }
 
 # ============================================================
@@ -522,28 +695,31 @@ def agent_build_audit_record(row: dict, chosen_key: str, prob: float, pred: int,
 tab1, tab2 = st.tabs(["🧍 Single patient form", "📤 Upload CSV (batch)"])
 
 with tab1:
-    st.subheader("Single patient form (executive-friendly)")
+    st.subheader("Single patient form")
     st.markdown(
-        "<div class='small-note'>Select how many years of data you have. The app will pick the right model and use the BestF1 threshold from metadata. State + facility are open entry.</div>",
+        "<div class='small-note'>Select the latest timepoint you have. The app will auto-pick the correct model. State + facility are open entry.</div>",
         unsafe_allow_html=True,
     )
 
+    # Choose max timepoint: baseline(0) + Y1..Y4
     max_year = st.selectbox(
-        "Data available up to which year?",
+        "Data available up to which timepoint?",
         options=[0, 1, 2, 3, 4],
         index=1,  # default = Y1
         key="sp_max_year",
-        help="Choose how many years of inputs you want to provide (T0=0, Y1..Y4). The app selects the matching model.",
+        help="Choose how many timepoints of inputs you want to provide (Baseline=0, Y1..Y4). The app selects the matching model.",
     )
 
     chosen_key = choose_model_key_by_year(max_year, available_keys)
     if not chosen_key:
-        st.error("No matching model found for the selected years. Confirm your models exist in the models/ folder.")
+        st.error("No matching model found for the selected timepoints. Confirm your models exist in the models/ folder.")
         st.stop()
 
     meta = available[chosen_key]["meta"]
     schema_cols = set(meta["feature_cols"])
-    st.success(f"Auto-selected model: {chosen_key}")
+
+    # Show only alias to user (hide internal model key)
+    st.success(f"Model selected: {model_alias(chosen_key)}")
 
     # -------------------------
     # Build input row
@@ -552,9 +728,12 @@ with tab1:
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         row = {}
 
-        # years loop includes T0 (0) to max_year
+        # timepoint loop includes baseline(0) to max_year
         for y in range(0, max_year + 1):
-            title = "T0 (Baseline) inputs" if y == 0 else f"Year {y} inputs"
+            # Schema-aware suffix (baseline might be T0 not Y0)
+            suf = time_suffix_for_schema(schema_cols, y)
+            title = "Baseline (T0) inputs" if y == 0 else f"Year {y} inputs"
+
             with st.expander(title, expanded=(y in [0, 1])):
 
                 st.markdown("#### Clinical / adherence metrics")
@@ -562,93 +741,93 @@ with tab1:
                 n1, n2, n3 = st.columns(3)
                 with n1:
                     age = st.number_input(
-                        f"age_Y{y}",
+                        f"age_{suf}",
                         min_value=0,
                         max_value=120,
                         value=35,
                         step=1,
-                        key=f"sp_age_{y}",
+                        key=f"sp_age_{suf}",
                         help=VAR_HELP["age"],
                     )
-                    add_if_in_schema(row, f"age_Y{y}", float(age), schema_cols)
+                    add_if_in_schema(row, f"age_{suf}", float(age), schema_cols)
 
                 with n2:
                     cd4 = st.number_input(
-                        f"cd4_Y{y}",
+                        f"cd4_{suf}",
                         min_value=0,
                         max_value=5000,
                         value=350,
                         step=10,
-                        key=f"sp_cd4_{y}",
+                        key=f"sp_cd4_{suf}",
                         help=VAR_HELP["cd4"],
                     )
-                    add_if_in_schema(row, f"cd4_Y{y}", float(cd4), schema_cols)
+                    add_if_in_schema(row, f"cd4_{suf}", float(cd4), schema_cols)
 
                 with n3:
                     vl = st.number_input(
-                        f"viral_load_Y{y}",
+                        f"viral_load_{suf}",
                         min_value=0.0,
                         value=1000.0,
                         step=50.0,
-                        key=f"sp_vl_{y}",
+                        key=f"sp_vl_{suf}",
                         help=VAR_HELP["viral_load"],
                     )
-                    add_if_in_schema(row, f"viral_load_Y{y}", float(vl), schema_cols)
+                    add_if_in_schema(row, f"viral_load_{suf}", float(vl), schema_cols)
 
                 # log10_vl auto
                 n4, n5, n6 = st.columns(3)
                 with n4:
                     logvl = round(math.log10(vl), 3) if vl > 0 else 0.0
                     st.metric(
-                        label=f"log10_vl_Y{y} (auto)",
+                        label=f"log10_vl_{suf} (auto)",
                         value=f"{logvl:.3f}",
                         help=VAR_HELP["log10_vl"],
                     )
-                    add_if_in_schema(row, f"log10_vl_Y{y}", float(logvl), schema_cols)
+                    add_if_in_schema(row, f"log10_vl_{suf}", float(logvl), schema_cols)
 
                 with n5:
                     wt = st.number_input(
-                        f"weight_Y{y}",
+                        f"weight_{suf}",
                         min_value=0.0,
                         value=60.0,
                         step=0.5,
-                        key=f"sp_wt_{y}",
+                        key=f"sp_wt_{suf}",
                         help=VAR_HELP["weight"],
                     )
-                    add_if_in_schema(row, f"weight_Y{y}", float(wt), schema_cols)
+                    add_if_in_schema(row, f"weight_{suf}", float(wt), schema_cols)
 
                 with n6:
                     missed = st.number_input(
-                        f"missed_appointments_Y{y}",
+                        f"missed_appointments_{suf}",
                         min_value=0,
                         value=0,
                         step=1,
-                        key=f"sp_missed_{y}",
+                        key=f"sp_missed_{suf}",
                         help=VAR_HELP["missed_appointments"],
                     )
-                    add_if_in_schema(row, f"missed_appointments_Y{y}", float(missed), schema_cols)
+                    add_if_in_schema(row, f"missed_appointments_{suf}", float(missed), schema_cols)
 
                 st.markdown("#### Pharmacy refill adherence calculator")
 
                 cA, cB, cC = st.columns(3)
                 with cA:
                     days_in_period = st.number_input(
-                        f"Days in assessment period (Y{y})",
+                        f"Days in assessment period ({suf})",
                         min_value=1,
                         max_value=365,
                         value=30,
                         step=1,
-                        key=f"sp_days_in_period_{y}",
+                        key=f"sp_days_in_period_{suf}",
                         help=VAR_HELP["days_in_period"],
                     )
                 with cB:
                     days_covered = st.number_input(
-                        f"Days covered by refills (Y{y})",
+                        f"Days covered by refills ({suf})",
                         min_value=0,
                         max_value=365,
                         value=0,
                         step=1,
-                        key=f"sp_days_covered_{y}",
+                        key=f"sp_days_covered_{suf}",
                         help=VAR_HELP["days_covered"],
                     )
 
@@ -659,137 +838,136 @@ with tab1:
 
                 with cC:
                     st.metric(
-                        label=f"pharmacy_refill_adherence_pct_Y{y} (auto)",
+                        label=f"pharmacy_refill_adherence_pct_{suf} (auto)",
                         value=f"{pharmacy_refill_adherence_pct:.2f}%",
                         help=VAR_HELP["pharmacy_refill_adherence_pct"],
                     )
                     st.metric(
-                        label=f"adherence_prop_Y{y} (auto)",
+                        label=f"adherence_prop_{suf} (auto)",
                         value=f"{adherence_prop:.4f}",
                         help=VAR_HELP["adherence_prop"],
                     )
 
-                add_if_in_schema(row, f"pharmacy_refill_adherence_pct_Y{y}", float(pharmacy_refill_adherence_pct), schema_cols)
-                add_if_in_schema(row, f"adherence_prop_Y{y}", float(adherence_prop), schema_cols)
+                add_if_in_schema(row, f"pharmacy_refill_adherence_pct_{suf}", float(pharmacy_refill_adherence_pct), schema_cols)
+                add_if_in_schema(row, f"adherence_prop_{suf}", float(adherence_prop), schema_cols)
 
                 late = st.number_input(
-                    f"days_late_Y{y}",
+                    f"days_late_{suf}",
                     min_value=0,
                     value=0,
                     step=1,
-                    key=f"sp_late_{y}",
+                    key=f"sp_late_{suf}",
                     help=VAR_HELP["days_late"],
                 )
-                add_if_in_schema(row, f"days_late_Y{y}", float(late), schema_cols)
+                add_if_in_schema(row, f"days_late_{suf}", float(late), schema_cols)
 
-                if y in [0, 1]:
-                    # keep baseline age field if your schema has it (often Y1)
+                # Baseline age field (only if schema expects it)
+                if "age_baseline_Y1" in schema_cols and y in [0, 1]:
                     base_age = st.number_input(
-                        f"age_baseline_Y{max(1, y)}",
+                        "age_baseline_Y1",
                         min_value=0,
                         max_value=120,
                         value=35,
                         step=1,
-                        key=f"sp_base_age_{y}",
+                        key="sp_base_age",
                         help=VAR_HELP["age_baseline"],
                     )
-                    # only add if exists in schema (safe)
-                    add_if_in_schema(row, f"age_baseline_Y{max(1, y)}", float(base_age), schema_cols)
+                    add_if_in_schema(row, "age_baseline_Y1", float(base_age), schema_cols)
 
                 st.markdown("#### Program / clinical context")
 
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     gender = st.selectbox(
-                        f"gender_Y{y}",
+                        f"gender_{suf}",
                         OPTIONS["gender"],
-                        key=f"sp_gender_{y}",
+                        key=f"sp_gender_{suf}",
                         help=VAR_HELP["gender"],
                     )
-                    add_if_in_schema(row, f"gender_Y{y}", gender, schema_cols)
+                    add_if_in_schema(row, f"gender_{suf}", gender, schema_cols)
 
                 with c2:
                     func = st.selectbox(
-                        f"functional_status_Y{y}",
+                        f"functional_status_{suf}",
                         OPTIONS["functional_status"],
-                        key=f"sp_func_{y}",
+                        key=f"sp_func_{suf}",
                         help=VAR_HELP["functional_status"],
                     )
-                    add_if_in_schema(row, f"functional_status_Y{y}", func, schema_cols)
+                    add_if_in_schema(row, f"functional_status_{suf}", func, schema_cols)
 
                 with c3:
                     regimen_line = st.selectbox(
-                        f"regimen_line_Y{y}",
+                        f"regimen_line_{suf}",
                         OPTIONS["regimen_line"],
-                        key=f"sp_line_{y}",
+                        key=f"sp_line_{suf}",
                         help=VAR_HELP["regimen_line"],
                     )
-                    add_if_in_schema(row, f"regimen_line_Y{y}", regimen_line, schema_cols)
+                    add_if_in_schema(row, f"regimen_line_{suf}", regimen_line, schema_cols)
 
                 c4, c5, c6 = st.columns(3)
                 with c4:
                     regimen_type = st.selectbox(
-                        f"regimen_type_Y{y}",
+                        f"regimen_type_{suf}",
                         OPTIONS["regimen_type"],
-                        key=f"sp_type_{y}",
+                        key=f"sp_type_{suf}",
                         help=VAR_HELP["regimen_type"],
                     )
-                    add_if_in_schema(row, f"regimen_type_Y{y}", regimen_type, schema_cols)
+                    add_if_in_schema(row, f"regimen_type_{suf}", regimen_type, schema_cols)
 
                 with c5:
                     tb = st.selectbox(
-                        f"tb_status_Y{y}",
+                        f"tb_status_{suf}",
                         OPTIONS["tb_status"],
-                        key=f"sp_tb_{y}",
+                        key=f"sp_tb_{suf}",
                         help=VAR_HELP["tb_status"],
                     )
-                    add_if_in_schema(row, f"tb_status_Y{y}", tb, schema_cols)
+                    add_if_in_schema(row, f"tb_status_{suf}", tb, schema_cols)
 
                 with c6:
                     who = st.selectbox(
-                        f"who_stage_Y{y}",
+                        f"who_stage_{suf}",
                         OPTIONS["who_stage"],
-                        key=f"sp_who_{y}",
+                        key=f"sp_who_{suf}",
                         help=VAR_HELP["who_stage"],
                     )
-                    add_if_in_schema(row, f"who_stage_Y{y}", who, schema_cols)
+                    add_if_in_schema(row, f"who_stage_{suf}", who, schema_cols)
 
-                # ✅ OPEN ENTRY FIELDS (replaces dropdowns)
+                # OPEN ENTRY FIELDS (state + facility)
                 c7, c8, c9 = st.columns(3)
                 with c7:
                     state = st.text_input(
-                        f"stateProvince_Y{y}",
+                        f"stateProvince_{suf}",
                         value="",
-                        key=f"sp_state_{y}",
+                        key=f"sp_state_{suf}",
                         help=VAR_HELP["stateProvince"],
                         placeholder="e.g., Lagos, Rivers, FCT-Abuja...",
                     )
-                    add_if_in_schema(row, f"stateProvince_Y{y}", state.strip(), schema_cols)
+                    add_if_in_schema(row, f"stateProvince_{suf}", state.strip(), schema_cols)
 
                 with c8:
                     fac = st.text_input(
-                        f"facilityName_Y{y}",
+                        f"facilityName_{suf}",
                         value="",
-                        key=f"sp_fac_{y}",
+                        key=f"sp_fac_{suf}",
                         help=VAR_HELP["facilityName"],
                         placeholder="Enter facility name (free text)",
                     )
-                    add_if_in_schema(row, f"facilityName_Y{y}", fac.strip(), schema_cols)
+                    add_if_in_schema(row, f"facilityName_{suf}", fac.strip(), schema_cols)
 
                 with c9:
                     sup = st.selectbox(
-                        f"suppressed_lt1000_Y{y}",
+                        f"suppressed_lt1000_{suf}",
                         OPTIONS["suppressed_lt1000"],
-                        key=f"sp_sup_{y}",
+                        key=f"sp_sup_{suf}",
                         help=VAR_HELP["suppressed_lt1000"],
                     )
                     st.caption("Note: 0 = No, 1 = Yes")
-                    add_if_in_schema(row, f"suppressed_lt1000_Y{y}", int(sup), schema_cols)
+                    add_if_in_schema(row, f"suppressed_lt1000_{suf}", int(sup), schema_cols)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ============================================================
-    # Predict + Save one row per prediction to Sheet + downloads
+    # Predict + Save one row per prediction (sheet + session)
     # ============================================================
     if st.button("Predict (Single Patient)", type="primary", key="sp_predict_btn"):
         df1 = pd.DataFrame([row])
@@ -797,9 +975,9 @@ with tab1:
 
         prob = float(res.loc[0, "pred_prob_unsuppressed"])
         pred = int(res.loc[0, "pred_class"])
-        thr  = float(res.loc[0, "used_threshold"])
+        thr = float(res.loc[0, "used_threshold"])
 
-        # Persist
+        # Persist state
         st.session_state["last_row"] = row
         st.session_state["last_res"] = res
         st.session_state["last_prob"] = prob
@@ -807,24 +985,25 @@ with tab1:
         st.session_state["last_thr"] = thr
         st.session_state["last_model_key"] = chosen_key
         st.session_state["last_max_year"] = int(max_year)
+        st.session_state["last_schema_cols"] = schema_cols
 
         # reset agent outputs
         st.session_state.pop("agent_validation", None)
         st.session_state.pop("agent_explanation", None)
         st.session_state.pop("last_audit", None)
 
-        # Create a base record (inputs + outputs)
+        # base record (inputs + outputs)
         record = flatten_for_sheet({
             **row,
-            "entry_id": "",  # filled below
+            "entry_id": "",
             "timestamp": _now_iso(),
-            "model_key": chosen_key,
-            "max_year": int(max_year),
+            "model_alias": model_alias(chosen_key),
+            "max_timepoint": int(max_year),
             "pred_prob_unsuppressed": prob,
             "pred_class": pred,
             "threshold_used": thr,
             "missing_features_filled": str(res.loc[0, "missing_features_filled"] or ""),
-            # agent notes placeholders (filled when agents run)
+            # agent placeholders
             "agent_validation_ok": "",
             "agent_validation_errors": "",
             "agent_validation_warnings": "",
@@ -835,7 +1014,7 @@ with tab1:
 
         record["entry_id"] = make_entry_id(record)
 
-        # Store in session (ONE ROW PER PREDICTION)
+        # Store in session log
         st.session_state.setdefault("retrain_log", [])
         st.session_state["retrain_log"].append(record)
         st.session_state["last_record_index"] = len(st.session_state["retrain_log"]) - 1
@@ -846,9 +1025,9 @@ with tab1:
             if ok:
                 st.success(msg)
             else:
-                st.warning(msg + " (You can still download the CSV below.)")
+                st.warning(msg + " (You can still download CSV as Admin.)")
         else:
-            st.info("Google Sheet logging not configured yet (still can download CSV below).")
+            st.info("Google Sheet logging not configured yet.")
 
         missing_txt = str(res.loc[0, "missing_features_filled"] or "").strip()
         if missing_txt:
@@ -856,7 +1035,7 @@ with tab1:
             st.write("Auto-filled features:", missing_txt)
 
     # ============================================================
-    # Results + Agent UI
+    # Results + Premium Agent UI (Premium only)
     # ============================================================
     if "last_res" in st.session_state:
         prob = st.session_state["last_prob"]
@@ -870,7 +1049,7 @@ with tab1:
             st.write(
                 {
                     "Predicted probability (unsuppressed risk)": prob,
-                    "BestF1 threshold used": thr,
+                    "Threshold used": thr,
                     "Predicted class (1 = at-risk/not suppressed, 0 = likely suppressed)": pred,
                 }
             )
@@ -882,138 +1061,145 @@ with tab1:
             st.dataframe(st.session_state["last_res"])
             st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("## 🤖 Agentic AI (Validation → Explanation → Audit)")
+        # Premium gating
+        st.markdown("## 🤖 Agent tools")
 
-        use_llm = st.toggle(
-            "Use AI narrative (LLM)",
-            value=st.session_state.get("use_llm", False),
-            key="use_llm",
-            help="Optional. Requires LLM secrets configured. If not configured, the app shows standard explanation.",
-        )
+        if not is_premium():
+            st.info("Agent tools are available to Premium users only. Use the Premium access code in the sidebar to unlock.")
+        else:
+            use_llm = st.toggle(
+                "Use AI narrative (LLM)",
+                value=st.session_state.get("use_llm", False),
+                key="use_llm",
+                help="Optional. Requires LLM secrets configured. If not configured, the app shows standard explanation.",
+            )
 
-        a1, a2, a3 = st.columns(3)
+            a1, a2, a3 = st.columns(3)
 
-        # --- helper to update last record in retrain_log AND push to sheet
-        def update_last_record_and_sheet(patch: dict):
-            if "retrain_log" not in st.session_state or "last_record_index" not in st.session_state:
-                return
-            idx = st.session_state["last_record_index"]
-            st.session_state["retrain_log"][idx].update(flatten_for_sheet(patch))
+            def update_last_record_and_sheet(patch: dict):
+                if "retrain_log" not in st.session_state or "last_record_index" not in st.session_state:
+                    return
+                idx = st.session_state["last_record_index"]
+                st.session_state["retrain_log"][idx].update(flatten_for_sheet(patch))
+                if sheets_enabled():
+                    append_to_gsheet(st.session_state["retrain_log"][idx])
 
-            # also push updated row (best effort)
-            # Note: Apps Script should upsert by entry_id, or append with same entry_id.
-            if sheets_enabled():
-                append_to_gsheet(st.session_state["retrain_log"][idx])
+            with a1:
+                if st.button("1) Validation", key="agent_validate_btn"):
+                    schema_cols = st.session_state["last_schema_cols"]
+                    v = agent_validate_row(st.session_state["last_row"], schema_cols, st.session_state["last_max_year"])
+                    st.session_state["agent_validation"] = v
 
-        with a1:
-            if st.button("1) Run Validation Agent", key="agent_validate_btn"):
-                v = agent_validate_row(st.session_state["last_row"], st.session_state["last_max_year"])
-                st.session_state["agent_validation"] = v
+                    patch = {
+                        "agent_validation_ok": bool(v["ok"]),
+                        "agent_validation_errors": " | ".join(v["errors"]) if v["errors"] else "",
+                        "agent_validation_warnings": " | ".join(v["warnings"]) if v["warnings"] else "",
+                        "agent_validation_fixes": " | ".join(v["fixes"]) if v["fixes"] else "",
+                    }
+                    update_last_record_and_sheet(patch)
 
-                patch = {
-                    "agent_validation_ok": bool(v["ok"]),
-                    "agent_validation_errors": " | ".join(v["errors"]) if v["errors"] else "",
-                    "agent_validation_warnings": " | ".join(v["warnings"]) if v["warnings"] else "",
-                    "agent_validation_fixes": " | ".join(v["fixes"]) if v["fixes"] else "",
-                }
-                update_last_record_and_sheet(patch)
+                    if v["errors"]:
+                        st.error("Validation errors found.")
+                    elif v["warnings"]:
+                        st.warning("Validation completed with warnings.")
+                    else:
+                        st.success("Validation passed (no errors).")
 
+            with a2:
+                if st.button("2) Explanation", key="agent_explain_btn"):
+                    schema_cols = st.session_state["last_schema_cols"]
+                    v = st.session_state.get("agent_validation")
+                    row_for_explain = v["row"] if v else st.session_state["last_row"]
+
+                    explanation = agent_explain(
+                        row=row_for_explain,
+                        schema_cols=schema_cols,
+                        prob_unsupp=st.session_state["last_prob"],
+                        pred_class=st.session_state["last_pred"],
+                        thr=st.session_state["last_thr"],
+                        max_year=st.session_state["last_max_year"],
+                        use_llm=use_llm,
+                    )
+                    st.session_state["agent_explanation"] = explanation
+                    update_last_record_and_sheet({"agent_explanation_text": explanation})
+                    st.success("Explanation generated.")
+
+            with a3:
+                if st.button("3) Audit", key="agent_audit_btn"):
+                    schema_cols = st.session_state["last_schema_cols"]
+                    v = st.session_state.get("agent_validation")
+                    row_for_audit = v["row"] if v else st.session_state["last_row"]
+
+                    audit = agent_build_audit_record(
+                        row=row_for_audit,
+                        schema_cols=schema_cols,
+                        chosen_key=st.session_state["last_model_key"],
+                        prob=st.session_state["last_prob"],
+                        pred=st.session_state["last_pred"],
+                        thr=st.session_state["last_thr"],
+                        max_year=st.session_state["last_max_year"],
+                    )
+                    st.session_state["last_audit"] = audit
+                    update_last_record_and_sheet({"agent_audit_json": json.dumps(audit)})
+                    st.success("Audit record added.")
+
+            # display agent outputs
+            v = st.session_state.get("agent_validation")
+            if v:
                 if v["errors"]:
-                    st.error("Validation errors found.")
-                elif v["warnings"]:
-                    st.warning("Validation completed with warnings.")
-                else:
-                    st.success("Validation passed (no errors).")
+                    st.error("**Errors:**\n" + "\n".join([f"- {e}" for e in v["errors"]]))
+                if v["warnings"]:
+                    st.warning("**Warnings:**\n" + "\n".join([f"- {w}" for w in v["warnings"]]))
+                if v["fixes"]:
+                    st.info("**Auto-fixes applied:**\n" + "\n".join([f"- {f}" for f in v["fixes"]]))
 
-        with a2:
-            if st.button("2) Generate Explanation Agent", key="agent_explain_btn"):
-                v = st.session_state.get("agent_validation")
-                row_for_explain = v["row"] if v else st.session_state["last_row"]
+            explanation = st.session_state.get("agent_explanation")
+            if explanation:
+                st.markdown("### Explanation")
+                st.markdown(explanation)
 
-                explanation = agent_explain(
-                    row=row_for_explain,
-                    prob_unsupp=st.session_state["last_prob"],
-                    pred_class=st.session_state["last_pred"],
-                    thr=st.session_state["last_thr"],
-                    max_year=st.session_state["last_max_year"],
-                    use_llm=use_llm,
-                )
-                st.session_state["agent_explanation"] = explanation
-
-                update_last_record_and_sheet({"agent_explanation_text": explanation})
-                st.success("Explanation generated.")
-
-        with a3:
-            if st.button("3) Create Audit Record", key="agent_audit_btn"):
-                v = st.session_state.get("agent_validation")
-                row_for_audit = v["row"] if v else st.session_state["last_row"]
-
-                audit = agent_build_audit_record(
-                    row=row_for_audit,
-                    chosen_key=st.session_state["last_model_key"],
-                    prob=st.session_state["last_prob"],
-                    pred=st.session_state["last_pred"],
-                    thr=st.session_state["last_thr"],
-                    max_year=st.session_state["last_max_year"],
-                )
-                st.session_state["last_audit"] = audit
-
-                update_last_record_and_sheet({"agent_audit_json": json.dumps(audit)})
-                st.success("Audit record added.")
-
-        v = st.session_state.get("agent_validation")
-        if v:
-            if v["errors"]:
-                st.error("**Errors:**\n" + "\n".join([f"- {e}" for e in v["errors"]]))
-            if v["warnings"]:
-                st.warning("**Warnings:**\n" + "\n".join([f"- {w}" for w in v["warnings"]]))
-            if v["fixes"]:
-                st.info("**Auto-fixes applied:**\n" + "\n".join([f"- {f}" for f in v["fixes"]]))
-
-        explanation = st.session_state.get("agent_explanation")
-        if explanation:
-            st.markdown("### Explanation")
-            st.markdown(explanation)
-
-        if st.session_state.get("last_audit"):
-            st.markdown("### Audit record (latest)")
-            st.json(st.session_state["last_audit"])
+            if st.session_state.get("last_audit"):
+                st.markdown("### Audit record (latest)")
+                st.json(st.session_state["last_audit"])
 
         # ============================================================
-        # Downloads (ONE ROW PER PREDICTION)
+        # Downloads (ADMIN ONLY)
         # ============================================================
         st.markdown("## 📥 Download entries (for retraining)")
 
-        if "retrain_log" in st.session_state and len(st.session_state["retrain_log"]) > 0:
-            last_entry_df = pd.DataFrame([st.session_state["retrain_log"][-1]])
-            st.download_button(
-                "Download last prediction row (CSV)",
-                data=last_entry_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"hiv_last_prediction_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="dl_last_entry_csv",
-            )
-
-            all_entries_df = pd.DataFrame(st.session_state["retrain_log"])
-            st.download_button(
-                "Download ALL session prediction rows (CSV)",
-                data=all_entries_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"hiv_session_predictions_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="dl_all_entries_csv",
-            )
+        if not is_admin():
+            st.caption("Downloads are restricted to Admin only.")
         else:
-            st.caption("No saved entries yet. Run a prediction first.")
+            if "retrain_log" in st.session_state and len(st.session_state["retrain_log"]) > 0:
+                last_entry_df = pd.DataFrame([st.session_state["retrain_log"][-1]])
+                st.download_button(
+                    "Download last prediction row (CSV)",
+                    data=last_entry_df.to_csv(index=False).encode("utf-8"),
+                    file_name=f"hiv_last_prediction_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="dl_last_entry_csv",
+                )
+
+                all_entries_df = pd.DataFrame(st.session_state["retrain_log"])
+                st.download_button(
+                    "Download ALL session prediction rows (CSV)",
+                    data=all_entries_df.to_csv(index=False).encode("utf-8"),
+                    file_name=f"hiv_session_predictions_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="dl_all_entries_csv",
+                )
+            else:
+                st.caption("No saved entries yet. Run a prediction first.")
     else:
-        st.info("Run a prediction first to unlock results and the agentic AI tools.")
+        st.info("Run a prediction first to unlock results and (Premium) agent tools.")
 
 # ============================================================
-# Batch scoring
+# Batch scoring (Upload CSV)
 # ============================================================
 with tab2:
     st.subheader("Batch scoring (Upload CSV)")
     st.markdown(
-        "<div class='small-note'>Upload a CSV. The app auto-selects the best model based on year columns present (_Y0.._Y4). State + facility can be any text.</div>",
+        "<div class='small-note'>Upload a CSV. The app auto-selects the best model based on timepoint columns present (_T0 or _Y0.._Y4).</div>",
         unsafe_allow_html=True,
     )
 
@@ -1025,10 +1211,10 @@ with tab2:
 
         chosen_key = choose_model_key_from_df(df_up, available_keys)
         if not chosen_key:
-            st.error("Could not auto-select a model for this CSV. Ensure it contains *_Y0..*_Y4 columns.")
+            st.error("Could not auto-select a model for this CSV. Ensure it contains *_T0 or *_Y0..*_Y4 columns.")
             st.stop()
 
-        st.success(f"Auto-selected model: {chosen_key}")
+        st.success(f"Model selected: {model_alias(chosen_key)}")
 
         if st.button("Run batch predictions", type="primary", key="batch_predict_btn"):
             res = predict_df(df_up, available[chosen_key])
@@ -1038,17 +1224,13 @@ with tab2:
             st.download_button(
                 "Download predictions CSV",
                 data=out_csv,
-                file_name=f"predictions_{chosen_key}.csv",
+                file_name=f"predictions_{model_alias(chosen_key).replace(' ', '_')}.csv",
                 mime="text/csv",
                 key="batch_download_btn",
             )
 
-# ============================================================
-# Notes for you (not shown in UI)
-# - Add to Streamlit secrets:
-#   GSHEETS_WEBHOOK_URL = "https://script.google.com/macros/s/.../exec"
-# - The webhook should append rows and ideally UPSERT by entry_id.
-# ============================================================
+
+
 
 
 
