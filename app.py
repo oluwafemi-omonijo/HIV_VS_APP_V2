@@ -862,14 +862,14 @@ with tab1:
                 add_if_in_schema(row, f"days_late_{suf}", float(late), schema_cols)
 
                 # Baseline age field (only if schema expects it)
-                if "age_baseline_Y1" in schema_cols and y in [0, 1]:
+                if "age_baseline_Y1" in schema_cols and y == 0:
                     base_age = st.number_input(
                         "age_baseline_Y1",
                         min_value=0,
                         max_value=120,
                         value=35,
                         step=1,
-                        key="sp_base_age",
+                        key="sp_base_age_baseline",
                         help=VAR_HELP["age_baseline"],
                     )
                     add_if_in_schema(row, "age_baseline_Y1", float(base_age), schema_cols)
