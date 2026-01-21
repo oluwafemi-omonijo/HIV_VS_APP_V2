@@ -23,6 +23,45 @@ import streamlit as st
 import tensorflow as tf
 import requests
 
+# ============================================================
+# Access control (Premium + Admin)
+# ============================================================
+
+def is_premium() -> bool:
+    required = st.secrets.get("PREMIUM_ACCESS_KEY", "").strip()
+    # If no premium key is set in secrets, do NOT block access (dev-friendly)
+    if not required:
+        return True
+    return st.session_state.get("premium_key", "") == required
+
+
+def is_admin() -> bool:
+    required = st.secrets.get("ADMIN_ACCESS_KEY", "").strip()
+    if not required:
+        return True
+    return st.session_state.get("admin_key", "") == required
+
+
+def render_access_sidebar():
+    with st.sidebar:
+        st.markdown("### 🔐 Access")
+
+        if st.secrets.get("PREMIUM_ACCESS_KEY", "").strip():
+            st.text_input(
+                "Premium access key",
+                type="password",
+                key="premium_key",
+                placeholder="Enter premium key",
+            )
+
+        if st.secrets.get("ADMIN_ACCESS_KEY", "").strip():
+            st.text_input(
+                "Admin access key",
+                type="password",
+                key="admin_key",
+                placeholder="Enter admin key",
+            )
+
 
 # -------------------------
 # PATHS
@@ -194,6 +233,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+render_access_sidebar()
 
 # ============================================================
 # ACCESS CONTROL (Admin + Premium)
