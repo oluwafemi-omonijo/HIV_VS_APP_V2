@@ -59,7 +59,7 @@ def is_admin() -> bool:
 
 def render_access_sidebar():
     with st.sidebar:
-        st.markdown("### 🔐 Access")
+        st.markdown("### Access")
         st.caption("Admin controls downloads. Premium unlocks Agentic AI tools.")
 
         # --- Premium unlock ---
@@ -76,7 +76,7 @@ def render_access_sidebar():
                 if st.button("Unlock Premium", key="btn_unlock_premium"):
                     if premium_input.strip() == required_premium:
                         st.session_state["premium_unlocked"] = True
-                        st.success("Premium unlocked ✅")
+                        st.success("Premium unlocked")
                     else:
                         st.session_state["premium_unlocked"] = False
                         st.error("Invalid premium code.")
@@ -105,7 +105,7 @@ def render_access_sidebar():
                 if st.button("Unlock Admin", key="btn_unlock_admin"):
                     if admin_input.strip() == required_admin:
                         st.session_state["admin_unlocked"] = True
-                        st.success("Admin unlocked ✅")
+                        st.success("Admin unlocked")
                     else:
                         st.session_state["admin_unlocked"] = False
                         st.error("Invalid admin code.")
@@ -189,7 +189,7 @@ VAR_HELP = {
 # -------------------------
 # UI
 # -------------------------
-st.set_page_config(page_title="HIV Viral Suppression Risk", layout="wide")
+st.set_page_config(page_title="HIV Viral Suppression Predictor", layout="wide")
 
 st.markdown(
     """
@@ -294,7 +294,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ✅ One access sidebar only (fixed)
+# One access sidebar only (fixed)
 render_access_sidebar()
 
 
@@ -687,7 +687,7 @@ def render_results_dashboard(prob: float, pred: int, thr: float, model_name: str
     risk_label = "At-risk (likely NOT suppressed)" if pred == 1 else "Likely suppressed"
     risk_badge = "HIGH RISK" if pred == 1 else "LOW RISK"
 
-    st.markdown("## 📊 Results dashboard")
+    st.markdown("## Results dashboard")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -914,7 +914,7 @@ with tab1:
         pred = st.session_state["last_pred"]
         thr = st.session_state["last_thr"]
 
-        # ✅ New dashboard
+        # New dashboard
         render_results_dashboard(prob, pred, thr, model_alias(st.session_state["last_model_key"]))
 
         # Technical details toggle
@@ -922,7 +922,7 @@ with tab1:
             st.dataframe(st.session_state["last_res"])
 
         # Premium gating
-        st.markdown("## 🤖 Agent tools")
+        st.markdown("## Agent tools")
 
         if not is_premium():
             st.info("Agent tools are available to Premium users only. Use the Premium access code in the sidebar to unlock.")
@@ -1022,7 +1022,7 @@ with tab1:
                 st.json(st.session_state["last_audit"])
 
         # ADMIN ONLY downloads
-        st.markdown("## 📥 Download entries (for retraining)")
+        st.markdown("## Download entries (for retraining)")
         if not is_admin():
             st.caption("Downloads are restricted to Admin only.")
         else:
