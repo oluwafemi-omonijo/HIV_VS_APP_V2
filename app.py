@@ -382,7 +382,7 @@ def render_results_dashboard(prob: float, pred: int, thr: float, model_name: str
 st.set_page_config(page_title="HIV Viral Non Suppression Predictor", layout="wide")
 render_access_sidebar()
 
-st.title("HIV Viral Non Suppression Predictor (E-PREDICTOR APP")
+st.title("HIV Viral Non Suppression Predictor (E-PREDICTOR APP)")
 st.caption("Streamlit UI → FastAPI brain (models + schema + prediction)")
 
 with st.sidebar:
