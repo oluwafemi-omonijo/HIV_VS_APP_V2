@@ -1,1 +1,25 @@
+# secrets
+.env
+*.env
+
+# venv
+.venv/
+venv/
+
+# models & artifacts
+models/
+*.keras
+*.h5
+*.joblib
+*.pkl
+
+# data
+*.csv
+*.xlsx
+
+# IDE
 .idea/
+
+# python cache
+__pycache__/
+*.pyc
